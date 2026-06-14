@@ -56,6 +56,29 @@ retry 3 ragflow_up
 
 echo ">> [3/3] Kernstack starten"
 COMPOSE_FILES=(-f docker-compose.yml)
+
+# --- Hauptmodell-Profil robust aus .env (COMPOSE_PROFILES) bestimmen --------
+#  Genau EIN Hauptmodell (main-qwen|main-gemma). Wird IMMER explizit per
+#  --profile uebergeben -> egal ob die Compose-Version COMPOSE_PROFILES und
+#  --profile vereinigt oder ueberschreibt, das Hauptmodell startet zuverlaessig.
+ENV_PROFILES=""
+[ -f .env ] && ENV_PROFILES="$(grep -E '^[[:space:]]*COMPOSE_PROFILES=' .env | tail -n1 | cut -d= -f2- | tr -d "\"' ")"
+has_qwen=0; has_gemma=0
+case ",$ENV_PROFILES," in *,main-qwen,*)  has_qwen=1  ;; esac
+case ",$ENV_PROFILES," in *,main-gemma,*) has_gemma=1 ;; esac
+if [ "$has_qwen" = 1 ] && [ "$has_gemma" = 1 ]; then
+  echo "FEHLER: In .env sind BEIDE Hauptmodelle aktiv (main-qwen UND main-gemma)."
+  echo "        Bitte genau EINES waehlen (sonst doppelter VRAM-Verbrauch). Abbruch."
+  exit 1
+fi
+MAIN_PROFILE="main-qwen"
+[ "$has_gemma" = 1 ] && MAIN_PROFILE="main-gemma"
+[ "$has_qwen" = 0 ] && [ "$has_gemma" = 0 ] && \
+  echo "   ! Kein Hauptmodell in .env (COMPOSE_PROFILES) -> Default: main-qwen"
+echo "   + Hauptmodell-Profil: $MAIN_PROFILE"
+MAIN_PROFILE_ARGS=(--profile "$MAIN_PROFILE")
+
+# --- Upgrade-Profile (per CLI, z.B. ./start.sh morphik) ---------------------
 PROFILE_ARGS=()
 for p in "${PROFILES[@]:-}"; do
   [ -n "$p" ] || continue
@@ -65,14 +88,14 @@ if [ "${#PROFILE_ARGS[@]}" -gt 0 ]; then
   echo "   + Upgrade-Overlay aktiv: ${PROFILES[*]}"
   COMPOSE_FILES+=(-f docker-compose.upgrades.yml)
 fi
-main_up() { docker compose "${COMPOSE_FILES[@]}" "${PROFILE_ARGS[@]}" up -d --build; }
+main_up() { docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" up -d --build; }
 retry 3 main_up
 
 echo "================================================================"
 echo ">> Endzustand RAGFlow:"
 ( cd ragflow && docker compose ps ) 2>&1 || true
 echo ">> Endzustand Kernstack:"
-docker compose "${COMPOSE_FILES[@]}" "${PROFILE_ARGS[@]}" ps 2>&1 || true
+docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" ps 2>&1 || true
 echo "================================================================"
 
 cat <<EOF

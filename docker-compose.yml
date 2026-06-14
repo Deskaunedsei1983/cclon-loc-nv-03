@@ -26,10 +26,15 @@
 
 services:
 
-  # ===================== 1) HAUPT-LLM (NVFP4, SM120) ========================
+  # ===================== 1a) HAUPT-LLM A: QWEN  (NVFP4, SM120) ==============
+  #  Umschaltbar gegen Gemma-Diffusion (1b) — es laeuft IMMER nur EINES davon.
+  #  Auswahl in der .env:  COMPOSE_PROFILES=main-qwen   (Standard)
+  #  Erreichbar bleibt es – wie gehabt – unter Hostname "vllm-main:5568",
+  #  Modell-ID "main" (zusaetzlich weiter als "qwen-main").
   vllm-main:
     image: vllm/vllm-openai:nightly
     container_name: vllm_main
+    profiles: ["main-qwen"]
     restart: unless-stopped
     ipc: host
     shm_size: "16gb"
@@ -55,7 +60,7 @@ services:
     # [VERIFY] HF-Repo-Namen pruefen (Qwen3.5 vs 3.6 NVFP4). --quantization weglassen.
     command: >
       nvidia/Qwen3.6-35B-A3B-NVFP4
-      --served-model-name qwen-main
+      --served-model-name qwen-main main
       --host 0.0.0.0
       --port 5568
       --trust-remote-code
@@ -72,6 +77,69 @@ services:
       --speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
     networks:
       - aistack-core
+
+  # ===================== 1b) HAUPT-LLM B: GEMMA-DIFFUSION (NVFP4, SM120) ====
+  #  ALTERNATIVE zu (1a). Auswahl in der .env:  COMPOSE_PROFILES=main-gemma
+  #  Diffusions-LLM (nicht-autoregressiv) -> bewusst NUR die vom Modell
+  #  benoetigten Flags + die fuer 256k-Kontext / VRAM-Sparsamkeit noetigen.
+  #  Per Netzwerk-Alias unter demselben Hostnamen "vllm-main:5568" erreichbar,
+  #  served-model-name "main" -> Agent/OWUI/RAGFlow brauchen KEINE Aenderung.
+  vllm-main-gemma:
+    image: vllm/vllm-openai:nightly        # aktuellstes vLLM (Diffusion + gemma4-Parser)
+    container_name: vllm_main_gemma
+    profiles: ["main-gemma"]
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "5568:5568"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_USE_V2_MODEL_RUNNER=1          # vom Modell verlangt
+      # Attention-Backend als Env (auf diesem Image erprobt) == Model-Card "--attention-backend TRITON_ATTN":
+      - VLLM_ATTENTION_BACKEND=TRITON_ATTN
+      # SM120/Blackwell FP4-MoE-Kernel — nur falls das Diffusionsmodell ihn unterstuetzt:
+      # - VLLM_USE_FLASHINFER_MOE_FP4=1
+      # - HF_HUB_OFFLINE=1                   # nach erstem Download aktivieren
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # An SM120/Blackwell + 256k-Kontext + VRAM-Sparsamkeit angepasst:
+    #  - 256k Kontext        : --max-model-len 262144
+    #  - sparsam wie bisher  : --gpu-memory-utilization 0.35 (Modell kleiner als Qwen
+    #                          -> bei Bedarf auf 0.30 senken), --max-num-seqs 2
+    #                          (Model-Card nennt 4; bewusst niedriger -> keine
+    #                          Multi-Request-/VRAM-Ueberbelegung, "wie bisher")
+    #  - Diffusion           : --override-generation-config max_new_tokens=null (Model-Card)
+    #  - NVFP4 wird i.d.R. autom. erkannt; sonst  --quantization modelopt  ergaenzen.
+    # [VERIFY] HF-Repo-Name, gemma4-Parser und 256k gegen die Model-Card pruefen.
+    command: >
+      nvidia/diffusiongemma-26B-A4B-IT-NVFP4
+      --served-model-name gemma-main main
+      --host 0.0.0.0
+      --port 5568
+      --trust-remote-code
+      --max-model-len 262144
+      --max-num-seqs 2
+      --gpu-memory-utilization 0.35
+      --enable-auto-tool-choice
+      --tool-call-parser gemma4
+      --reasoning-parser gemma4
+      --override-generation-config '{"max_new_tokens":null}'
+      --default-chat-template-kwargs '{"enable_thinking":true}'
+    networks:
+      aistack-core:
+        aliases:
+          - vllm-main
 
   # ===================== 2) HELFER-LLM (kleine Tasks) =======================
   vllm-helper:
@@ -115,8 +183,8 @@ services:
       --tool-call-parser qwen3_coder
     networks:
       - aistack-core
-    depends_on:
-      - vllm-main
+    # Kein depends_on auf das Hauptmodell mehr: es ist jetzt profil-gegated
+    # (main-qwen|main-gemma) und wird per Netzwerk-Alias "vllm-main" erreicht.
 
   # ===================== 3) EMBEDDINGS fuer Mem0 (NICHT RAGFlows TEI) ========
   # Bewusst "embeddings" statt "tei" genannt, um Namenskollision mit RAGFlows
@@ -223,7 +291,7 @@ services:
       - AGENT_IMPL=${AGENT_IMPL:-langgraph}     # "pydantic" oder "langgraph"
       # LLM
       - LLM_BASE_URL=http://vllm-main:5568/v1
-      - LLM_MODEL=qwen-main
+      - LLM_MODEL=main          # stabil: zeigt immer auf das aktive Hauptmodell (Qwen ODER Gemma)
       - LLM_API_KEY=not-needed
       # Embeddings (Mem0)
       - EMBED_BASE_URL=http://embeddings:80/v1
@@ -250,7 +318,7 @@ services:
       - aistack-sandbox
       - aistack-rag
     depends_on:
-      - vllm-main
+      # vllm-main entfernt (profil-gegated, via Alias erreicht) — Reihenfolge unkritisch
       - embeddings
       - qdrant
       - presidio-proxy
@@ -292,7 +360,7 @@ services:
       - aistack-core
       - aistack-sandbox
     depends_on:
-      - vllm-main
+      # vllm-main entfernt (profil-gegated, via Alias erreicht)
       - agent
       - code-sandbox
       - presidio-proxy
@@ -351,7 +419,7 @@ services:
       - DATABASE_URL=postgresql://ocu:${OCU_DB_PASSWORD:-bitte-aendern}@ocu-postgres:5432/ocu
       - OPENAI_BASE_URL=http://vllm-main:5568/v1     # LLM des Sandbox-Agenten -> lokal
       - OPENAI_API_KEY=not-needed
-      - MODEL=qwen-main
+      - MODEL=main                                   # stabil ueber Modell-Umschaltung
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock     # Vertrauensgrenze! siehe README
     networks:

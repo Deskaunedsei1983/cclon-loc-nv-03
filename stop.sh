@@ -17,6 +17,7 @@ EXTRA=()
 
 echo ">> Kernstack + Upgrades stoppen"
 docker compose -f docker-compose.yml -f docker-compose.upgrades.yml \
+  --profile main-qwen --profile main-gemma \
   --profile microvm --profile computer-use --profile morphik down "${EXTRA[@]}" 2>&1 || true
 
 echo ">> RAGFlow stoppen"

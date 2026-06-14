@@ -67,7 +67,7 @@ services:
       - DATABASE_URL=postgresql://ocu:${OCU_DB_PASSWORD:-bitte-aendern}@ocu-postgres:5432/ocu
       - OPENAI_BASE_URL=http://vllm-main:5568/v1
       - OPENAI_API_KEY=not-needed
-      - MODEL=qwen-main
+      - MODEL=main                                   # stabil ueber Modell-Umschaltung
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock     # Vertrauensgrenze! siehe README
     networks:

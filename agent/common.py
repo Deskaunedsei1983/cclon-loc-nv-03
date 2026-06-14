@@ -29,7 +29,7 @@ log = logging.getLogger("agent.common")
 
 # --- Konfiguration ----------------------------------------------------------
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://vllm-main:5568/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL", "qwen-main")
+LLM_MODEL = os.environ.get("LLM_MODEL", "main")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "not-needed")
 
 EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "http://embeddings:80/v1")

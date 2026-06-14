@@ -14,7 +14,7 @@ eigene neue Docker-Netze, eigenes RAGFlow, eigene Volumes.
 ```
    ┌──────────────────── aistack-core (Bridge, MIT Internet) ─────────────────────┐
    │                                                                               │
-   │  Open WebUI ──┬─► vllm-main   (Qwen3.5-35B-A3B NVFP4, 26k, FP8-KV)   [GPU]    │
+   │  Open WebUI ──┬─► vllm-main   (Qwen NVFP4 | Gemma-Diffusion NVFP4)   [GPU]    │
    │   (:3009)     ├─► vllm-helper (Qwen3.5-4B)                           [GPU]    │
    │               └─► research-agent ─┐                                           │
    │  embeddings(bge-m3)[GPU]  Qdrant(on-disk) ◄─┤ Mem0                            │
@@ -45,6 +45,46 @@ Morphik) · Ausführung (luftdichte Sandbox) · Frontend (Open WebUI).
   nichts ins Web schicken (keine PII-Leaks durch generierten Code).
 - `aistack-rag` — schmales Brückennetz zwischen Agent und RAGFlow-Server.
 - `ragflow` — RAGFlow-intern (ES/MySQL/MinIO/Redis bleiben gekapselt).
+
+---
+
+## 1a. Hauptmodell umschalten: Qwen ⇄ Gemma-Diffusion (per `.env`)
+
+Das **Haupt-LLM** ist umschaltbar — entweder das bisherige **Qwen** *oder* das
+**Gemma-Diffusion**-Modell, **nie beide gleichzeitig** (sonst doppelter VRAM).
+Die Auswahl steckt in **einer** Zeile der `.env` (Docker-Compose-Profil):
+
+```ini
+# genau EINEN Wert setzen:
+COMPOSE_PROFILES=main-qwen     # nvidia/Qwen3.6-35B-A3B-NVFP4           (Standard)
+# COMPOSE_PROFILES=main-gemma  # nvidia/diffusiongemma-26B-A4B-IT-NVFP4 (Diffusion, 256k)
+```
+
+- Beide Varianten hängen am **gleichen Hostnamen** `vllm-main:5568` (Netzwerk-Alias)
+  und liefern die **stabile Modell-ID `main`** → **Agent, Open WebUI, RAGFlow und
+  computer-use bleiben unverändert**. (Qwen antwortet zusätzlich weiter auf `qwen-main`,
+  Gemma zusätzlich auf `gemma-main`.)
+- `./start.sh` liest die Auswahl aus der `.env`, erzwingt **genau ein** Hauptmodell
+  (Default `main-qwen`) und **bricht ab**, falls versehentlich beide gesetzt sind.
+- Helfer-LLM, Embeddings, Agent usw. laufen davon **unabhängig** weiter.
+- Umschalten (altes stoppen, neues starten):
+  ```bash
+  # in .env COMPOSE_PROFILES=main-gemma setzen, dann z.B.:
+  docker compose -f docker-compose.yml --profile main-qwen  down            # altes Hauptmodell weg
+  docker compose -f docker-compose.yml --profile main-gemma up -d vllm-main-gemma
+  # bequemer (macht beides passend):  ./start.sh
+  ```
+
+**Gemma-Start — an SM120/Blackwell, 256k & VRAM-Sparsamkeit angepasst (Kernparameter):**
+`--max-model-len 262144` (256k) · `--gpu-memory-utilization 0.35` ·
+`--max-num-seqs 2` (keine Multi-Request-/VRAM-Überbelegung, „wie bisher"; Model-Card
+nennt 4) · Env `VLLM_USE_V2_MODEL_RUNNER=1` · Env `VLLM_ATTENTION_BACKEND=TRITON_ATTN`
+(≙ Model-Card-Flag `--attention-backend TRITON_ATTN`, hier als Env, da auf dem Image
+erprobt) · `--tool-call-parser gemma4 --reasoning-parser gemma4 --enable-auto-tool-choice` ·
+`--override-generation-config '{"max_new_tokens":null}'` (Diffusion) ·
+`--default-chat-template-kwargs '{"enable_thinking":true}'`. NVFP4 wird i. d. R.
+automatisch erkannt; sonst `--quantization modelopt` ergänzen. Image bleibt
+`vllm/vllm-openai:nightly` (aktuellstes vLLM).
 
 ---
 
@@ -147,7 +187,8 @@ RAGFlow bringt **keine** Modelle mit — du verkabelst es mit deinem vLLM:
 
 1. RAGFlow-UI öffnen: **http://localhost** → Konto anlegen (lokal).
 2. **Model Providers** → einen **OpenAI-kompatiblen** Anbieter hinzufügen:
-   - Chat-Modell: Base-URL **`http://host.docker.internal:5568/v1`**, Modell `qwen-main`, Key beliebig.
+   - Chat-Modell: Base-URL **`http://host.docker.internal:5568/v1`**, Modell `main`, Key beliebig.
+     *(`main` zeigt immer auf das aktive Hauptmodell — überlebt das Qwen⇄Gemma-Umschalten.)*
    - Embedding-Modell: entweder RAGFlows eigenes TEI-Profil aktivieren
      (`COMPOSE_PROFILES=...,tei-gpu` in `ragflow/.env`) **oder** ein
      OpenAI-kompatibles Embedding eintragen (Base-URL `http://host.docker.internal:8082/v1`).
@@ -166,7 +207,7 @@ RAGFlow bringt **keine** Modelle mit — du verkabelst es mit deinem vLLM:
 ```bash
 docker network create aistack-rag
 ( cd ragflow && docker compose up -d )            # RAGFlow
-docker compose up -d vllm-main                    # erst das große Modell testen
+docker compose --profile main-qwen up -d vllm-main   # Hauptmodell (Gemma: --profile main-gemma up -d vllm-main-gemma)
 curl -s http://localhost:5568/v1/models | python -m json.tool
 docker compose up -d vllm-helper embeddings qdrant searxng presidio-proxy
 docker compose up -d code-sandbox agent open-webui
@@ -176,14 +217,15 @@ docker compose up -d code-sandbox agent open-webui
 
 ## 6. Open WebUI konfigurieren (http://localhost:3009)
 
-1. **Modelle** erscheinen automatisch: `qwen-main`, `qwen-helper`, `research-agent`.
+1. **Modelle** erscheinen automatisch: `main` (= aktives Hauptmodell, Qwen *oder* Gemma),
+   `qwen-helper`, `research-agent`.
 2. **Task-Model** (Titel/Tags): *Admin → Settings → Interface* → **`qwen-helper`**.
 3. **Code-Interpreter:** *Admin → Settings → Code Execution* → Engine **Jupyter**,
    URL `http://code-sandbox:8888`, Auth **token**, Token = dein `JUPYTER_TOKEN`.
    *(Die Compose-ENV ist ein Vorschuss; maßgeblich ist die UI — Keys variieren je OWUI-Version. [VERIFY])*
 4. **Websuche:** *Admin → Settings → Web Search* → `searxng`,
    Query-URL `http://presidio-proxy:8080/search?q=<query>` → jede Suche wird PII-maskiert.
-5. **System-Prompt für Office-Files** (Workspace → Models → `qwen-main`):
+5. **System-Prompt für Office-Files** (Workspace → Models → `main`):
    > Wenn der Nutzer Word/Excel/PowerPoint/PDF oder ein Notebook will, SCHREIBE und
    > FÜHRE Python im Code-Interpreter AUS, erzeuge eine ECHTE Datei
    > (python-docx/openpyxl/python-pptx/reportlab/nbformat), speichere sie und nenne
@@ -302,10 +344,15 @@ Drei Wege, das bei Bedarf nachzurüsten:
 
 | Komponente | VRAM ca. |
 |---|---|
-| vllm-main (35B-A3B NVFP4, 26k, util 0.35, **Vision an** + MTP-Draft) | ~30–34 GB |
+| vllm-main (Qwen 35B-A3B NVFP4, 26k, util 0.35, **Vision an** + MTP-Draft) | ~30–34 GB |
+| *— ODER —* vllm-main-gemma (Gemma 26B-A4B NVFP4, **256k**, util 0.35, max-num-seqs 2) | ~30–34 GB |
 | vllm-helper (4B, 32k, util 0.15) | ~10–12 GB |
 | embeddings (bge-m3) | ~2–3 GB |
 | **Summe / frei** | **~44–48 GB / ~48 GB frei** |
+
+> **Qwen und Gemma schließen sich aus** (Profil-Umschaltung `main-qwen`/`main-gemma`) →
+> es liegt **nie mehr als ein** Hauptmodell im VRAM. `util 0.35` deckelt die
+> Reservierung; da Gemma kleiner als Qwen ist, kannst du auf `0.30` senken.
 
 Hinweise zum Hauptmodell: der **Vision-Encoder** ist geladen (Bildverstehen) und
 kostet etwas extra; die **MTP-Spekulation** (`--speculative-config`) hält ein
@@ -328,6 +375,15 @@ Konflikt; daher bleibt RAGFlow standardmäßig auf CPU.
 - **`--quantization modelopt`**: falls vLLM meckert, `modelopt_fp4` probieren.
 - **`--speculative-config` (MTP)**: nur wenn die NVFP4-Checkpoints die
   MTP-Module enthalten — sonst beim Laden Fehler → Flag entfernen.
+- **Gemma-Diffusion** (`COMPOSE_PROFILES=main-gemma`): HF-Repo
+  `nvidia/diffusiongemma-26B-A4B-IT-NVFP4`, die Parser `gemma4`
+  (`--tool-call-parser`/`--reasoning-parser`) und `VLLM_USE_V2_MODEL_RUNNER=1`
+  gegen Model-Card + dein vLLM-Nightly prüfen. Attention via Env
+  `VLLM_ATTENTION_BACKEND=TRITON_ATTN` (manche Builds: CLI `--attention-backend
+  TRITON_ATTN`). NVFP4 ggf. `--quantization modelopt`. Diffusionsmodelle nutzen den
+  KV-Cache anders → die **autoregressiven** Sparflags (fp8-KV, chunked-prefill, MTP)
+  bewusst **NICHT** übernommen; nur falls FP4-MoE unterstützt:
+  `VLLM_USE_FLASHINFER_MOE_FP4=1`.
 - **Vision**: KEIN `--language-model-only` (Vision-Encoder bleibt geladen).
   Falls du Bilder bewusst sperren willst: `--limit-mm-per-prompt '{"image":0}'`.
 - **`--safetensors-load-strategy prefetch`**: existiert ab neueren vLLM-Builds
@@ -354,7 +410,9 @@ Konflikt; daher bleibt RAGFlow standardmäßig auf CPU.
 # manuell mit Overlay:
 docker compose -f docker-compose.yml -f docker-compose.upgrades.yml --profile morphik up -d
 docker compose ps               # Status Kernstack
-docker compose logs -f vllm-main
+docker compose logs -f vllm-main          # Qwen-Hauptmodell (COMPOSE_PROFILES=main-qwen)
+docker compose logs -f vllm-main-gemma    # Gemma-Hauptmodell (COMPOSE_PROFILES=main-gemma)
+# Hauptmodell umschalten: in .env COMPOSE_PROFILES=main-qwen|main-gemma setzen -> ./start.sh
 docker compose up -d agent      # Agent neu (z.B. nach AGENT_IMPL- oder RAGFLOW_API_KEY-Änderung)
 ( cd ragflow && docker compose logs -f ragflow-cpu )
 ./stop.sh                       # alles stoppen (Volumes bleiben)
