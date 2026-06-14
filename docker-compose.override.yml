@@ -1,0 +1,14 @@
+# Override (wird von `docker compose` im ragflow/-Ordner automatisch geladen).
+# Haengt NUR den RAGFlow-Server zusaetzlich an das gemeinsame Bundle-Netz
+# "aistack-rag", damit der Agent ihn unter http://ragflow-cpu:9380 erreicht.
+# RAGFlows interne Backing-Services (es01/mysql/minio/redis) bleiben im
+# privaten "ragflow"-Netz isoliert.
+services:
+  ragflow-cpu:
+    networks:
+      - ragflow
+      - aistack-rag
+
+networks:
+  aistack-rag:
+    external: true        # wird einmalig erstellt: docker network create aistack-rag

@@ -1,0 +1,16 @@
+# Sensible Umgebungsvariablen und Passwörter
+.env
+.env.local
+.env.*.local
+config.json
+*.pem
+*.key
+
+# Betriebssystem-spezifische Dateien
+.DS_Store
+Thumbs.db
+
+# Falls du lokale Python-Umgebungen oder Node-Module nutzt
+venv/
+.venv/
+node_modules/

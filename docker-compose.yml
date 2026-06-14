@@ -1,0 +1,437 @@
+# ============================================================================
+#  Eigenständiger, lokaler, DSGVO-orientierter AI-Stack
+#  ---------------------------------------------------------------------------
+#  vLLM (Haupt+Helfer) -> Agent (PydanticAI ODER LangGraph-Critic) ->
+#  Tools {RAGFlow/Morphik Retrieval, luftdichte Code-Sandbox, maskierte Suche}
+#  -> Mem0 (Qdrant on-disk) -> Open WebUI
+#
+#  EIGENE, NEUE NETZE (von diesem Bundle erzeugt — kein Bezug auf Altbestand):
+#   - aistack-core    : Backbone (Bridge, mit Internet)
+#   - aistack-sandbox : internal:true -> KEIN Internet (luftdichte Code-Sandbox)
+#   - aistack-rag     : gemeinsames Bridge-Netz mit dem RAGFlow-Bundle
+#                       (einmalig anlegen: docker network create aistack-rag)
+#
+#  RAGFlow ist als eigenständiges Sub-Bundle unter ./ragflow/ enthalten
+#  (Original-Upstream-Files) und wird separat gestartet — start.sh erledigt
+#  beides in der richtigen Reihenfolge.
+#
+#  UPGRADE-PFADE sind als COMPOSE-PROFILE eingebaut (starten nur auf Wunsch):
+#   --profile fragments     : E2B-Fragments (echte React-Artifacts)        [EXPERIMENTELL]
+#   --profile computer-use  : Wide-Moat open-computer-use (Browser+Skills)  [EXPERIMENTELL]
+#   --profile morphik       : Morphik (multimodales/visuelles RAG)          [EXPERIMENTELL]
+#   (LangGraph-Critic ist KEIN Extra-Dienst -> per AGENT_IMPL=langgraph im Agent)
+#
+#  Details, Reihenfolge, OWUI-Konfig, VRAM-Budget, [VERIFY]-Punkte: README.md
+# ============================================================================
+
+services:
+
+  # ===================== 1) HAUPT-LLM (NVFP4, SM120) ========================
+  vllm-main:
+    image: vllm/vllm-openai:nightly
+    container_name: vllm_main
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "5568:5568"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_USE_FLASHINFER_MOE_FP4=1
+      - VLLM_ATTENTION_BACKEND=FLASHINFER
+      # - HF_HUB_OFFLINE=1            # nach erstem Download aktivieren
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # [VERIFY] HF-Repo-Namen pruefen (Qwen3.5 vs 3.6 NVFP4). --quantization weglassen.
+    command: >
+      nvidia/Qwen3.6-35B-A3B-NVFP4
+      --served-model-name qwen-main
+      --host 0.0.0.0
+      --port 5568
+      --trust-remote-code
+      --quantization modelopt
+      --max-model-len "260000"
+      --kv-cache-dtype fp8
+      --max-num-seqs 2
+      --gpu-memory-utilization 0.35
+      --enable-chunked-prefill
+      --max-num-batched-tokens 8192
+      --reasoning-parser qwen3
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
+      --speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'
+    networks:
+      - aistack-core
+
+  # ===================== 2) HELFER-LLM (kleine Tasks) =======================
+  vllm-helper:
+    image: vllm/vllm-openai:nightly
+    container_name: vllm_helper
+    restart: unless-stopped
+    ipc: host
+    shm_size: "4gb"
+    ulimits:
+      memlock: -1
+    ports:
+      - "30001:30001"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      # - HF_HUB_OFFLINE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Default sparsam (32k/0.15 ~14 GB). Dein Template-Wert war 151000/0.40 (~38 GB):
+    # dafuer --max-model-len 151000 und --gpu-memory-utilization 0.40 setzen.
+    command: >
+      Qwen/Qwen3.5-4B
+      --served-model-name qwen-helper
+      --host 0.0.0.0
+      --port 30001
+      --trust-remote-code
+      --language-model-only
+      --max-model-len 32768
+      --enable-chunked-prefill
+      --max-num-batched-tokens 8192
+      --kv-cache-dtype fp8
+      --max-num-seqs 8
+      --gpu-memory-utilization 0.15
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+    networks:
+      - aistack-core
+    depends_on:
+      - vllm-main
+
+  # ===================== 3) EMBEDDINGS fuer Mem0 (NICHT RAGFlows TEI) ========
+  # Bewusst "embeddings" statt "tei" genannt, um Namenskollision mit RAGFlows
+  # tei-Service zu vermeiden. Versorgt Mem0 (Agent-Gedaechtnis).
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest   # [VERIFY] SM120-Tag
+    container_name: embeddings
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    volumes:
+      - embeddings-data:/data
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    command: --model-id BAAI/bge-m3 --dtype float16
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - aistack-core
+
+  # ===================== 4) QDRANT (Mem0-Vektorstore, on-disk/NVMe) =========
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      - QDRANT__STORAGE__ON_DISK_PAYLOAD=true
+      - QDRANT__TELEMETRY_DISABLED=true
+    networks:
+      - aistack-core
+
+  # ===================== 5) SEARXNG (privater Meta-Suchindex) ===============
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    expose:
+      - "8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-bitte-zufalls-string-setzen}
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    networks:
+      - aistack-core
+
+  # ===================== 6) PRESIDIO-MASKING-PROXY ==========================
+  presidio-proxy:
+    build:
+      context: ./presidio-proxy
+    image: presidio-search-proxy:local
+    container_name: presidio_proxy
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      - SEARXNG_URL=http://searxng:8080
+      - PROXY_LANG=de
+    networks:
+      - aistack-core
+    depends_on:
+      - searxng
+
+  # ===================== 7) CODE-SANDBOX (luftdicht) ========================
+  code-sandbox:
+    build:
+      context: ./code-sandbox
+    image: code-sandbox:local
+    container_name: code_sandbox
+    restart: unless-stopped
+    expose:
+      - "8888"
+      - "8000"
+    environment:
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-bitte-zufalls-token-setzen}
+    volumes:
+      - code-sandbox-data:/home/sandbox/work
+    mem_limit: 8g
+    cpus: 4.0
+    pids_limit: 512
+    # runtime: runsc          # gVisor fuer Hypervisor-Isolation (empfohlen)
+    networks:
+      - aistack-sandbox        # NUR luftdicht -> kein Egress
+
+  # ===================== 8) AGENT (PydanticAI ODER LangGraph) ===============
+  agent:
+    build:
+      context: ./agent
+    image: ai-agent:local
+    container_name: agent
+    restart: unless-stopped
+    ports:
+      - "9009:9000"            # 9009 am Host (9000 ist von RAGFlows MinIO belegt)
+    environment:
+      - AGENT_IMPL=${AGENT_IMPL:-langgraph}     # "pydantic" oder "langgraph"
+      # LLM
+      - LLM_BASE_URL=http://vllm-main:5568/v1
+      - LLM_MODEL=qwen-main
+      - LLM_API_KEY=not-needed
+      # Embeddings (Mem0)
+      - EMBED_BASE_URL=http://embeddings:80/v1
+      - EMBED_MODEL=BAAI/bge-m3
+      - EMBED_DIMS=1024
+      # Mem0/Qdrant
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - MEM0_COLLECTION=mem0_main
+      - MEM0_TELEMETRY=False
+      - ANONYMIZED_TELEMETRY=False
+      # RAGFlow (jetzt Teil dieses Bundles, erreichbar via aistack-rag)
+      - RAGFLOW_API_URL=http://ragflow-cpu:9380
+      - RAGFLOW_API_KEY=${RAGFLOW_API_KEY:-}
+      - RAGFLOW_DATASET_IDS=${RAGFLOW_DATASET_IDS:-}
+      # Morphik (optional, nur mit --profile morphik aktiv)
+      - MORPHIK_API_URL=${MORPHIK_API_URL:-}
+      - MORPHIK_API_KEY=${MORPHIK_API_KEY:-}
+      # Maskierte Suche + Sandbox
+      - SEARCH_URL=http://presidio-proxy:8080/search
+      - SANDBOX_RUN_URL=http://code-sandbox:8000/run
+    networks:
+      - aistack-core
+      - aistack-sandbox
+      - aistack-rag
+    depends_on:
+      - vllm-main
+      - embeddings
+      - qdrant
+      - presidio-proxy
+      - code-sandbox
+
+  # ===================== 9) OPEN WEBUI (Frontend) ===========================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:0.9.5
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "3009:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - "OPENAI_API_BASE_URLS=http://vllm-main:5568/v1;http://agent:9000/v1"
+      - "OPENAI_API_KEYS=not-needed;not-needed"
+      - WEBUI_AUTH=false
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
+      - ANONYMIZED_TELEMETRY=false
+      - DO_NOT_TRACK=true
+      - SCARF_NO_ANALYTICS=true
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=searxng
+      - SEARXNG_QUERY_URL=http://presidio-proxy:8080/search?q=<query>
+      - WEB_SEARCH_RESULT_COUNT=5
+      - ENABLE_CODE_INTERPRETER=true
+      - CODE_EXECUTION_ENGINE=jupyter
+      - CODE_EXECUTION_JUPYTER_URL=http://code-sandbox:8888
+      - CODE_EXECUTION_JUPYTER_AUTH=token
+      - CODE_EXECUTION_JUPYTER_AUTH_TOKEN=${JUPYTER_TOKEN:-bitte-zufalls-token-setzen}
+      - CODE_INTERPRETER_ENGINE=jupyter
+      - CODE_INTERPRETER_JUPYTER_URL=http://code-sandbox:8888
+      - CODE_INTERPRETER_JUPYTER_AUTH=token
+      - CODE_INTERPRETER_JUPYTER_AUTH_TOKEN=${JUPYTER_TOKEN:-bitte-zufalls-token-setzen}
+    volumes:
+      - open-webui-data:/app/backend/data
+    networks:
+      - aistack-core
+      - aistack-sandbox
+    depends_on:
+      - vllm-main
+      - agent
+      - code-sandbox
+      - presidio-proxy
+
+  # ==========================================================================
+  #  UPGRADE-PFAD A — E2B FRAGMENTS  (echte React-Artifacts wie claude.ai)
+  #  [EXPERIMENTELL] Starten:  docker compose --profile fragments up -d fragments
+  #  WICHTIG: Fragments fuehrt Code in E2B-Sandboxes aus. Voll-lokales E2B
+  #  (Firecracker-MicroVMs) ist aufwendig; ohne lokales E2B braeuchte es die
+  #  E2B-Cloud -> bricht die Air-Gap. Siehe ./fragments/README.md.
+  #  Das Frontend selbst laeuft lokal gegen dein vLLM.
+  # ==========================================================================
+  fragments:
+    profiles: ["fragments"]
+    build:
+      context: ./fragments        # Repo dorthin klonen, siehe ./fragments/README.md
+    image: fragments:local
+    container_name: fragments
+    restart: unless-stopped
+    ports:
+      - "3010:3000"
+    env_file:
+      - ./fragments/.env.local     # OPENAI_BASE_URL -> vLLM, E2B-Settings
+    networks:
+      - aistack-core
+
+  # ==========================================================================
+  #  UPGRADE-PFAD B — open-computer-use  (isolierter Browser + Office-Skills)
+  #  [EXPERIMENTELL] Starten:  docker compose --profile computer-use up -d
+  #  ACHTUNG: Der Manager spawnt Sandbox-Container und braucht dafuer den
+  #  Docker-Socket -> das ist eine HOST-Vertrauensgrenze. Fuer echte Isolation
+  #  rootless Docker + gVisor, oder Kata via K8s. Siehe ./open-computer-use/README.md.
+  # ==========================================================================
+  ocu-postgres:
+    profiles: ["computer-use"]
+    image: postgres:16-alpine
+    container_name: ocu_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=ocu
+      - POSTGRES_PASSWORD=${OCU_DB_PASSWORD:-bitte-aendern}
+      - POSTGRES_DB=ocu
+    volumes:
+      - ocu-pg-data:/var/lib/postgresql/data
+    networks:
+      - aistack-core
+
+  open-computer-use:
+    profiles: ["computer-use"]
+    image: ghcr.io/wide-moat/open-computer-use:latest   # [VERIFY] exaktes Image/Tag
+    container_name: open_computer_use
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      - DATABASE_URL=postgresql://ocu:${OCU_DB_PASSWORD:-bitte-aendern}@ocu-postgres:5432/ocu
+      - OPENAI_BASE_URL=http://vllm-main:5568/v1     # LLM des Sandbox-Agenten -> lokal
+      - OPENAI_API_KEY=not-needed
+      - MODEL=qwen-main
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock     # Vertrauensgrenze! siehe README
+    networks:
+      - aistack-core
+    depends_on:
+      - ocu-postgres
+
+  # ==========================================================================
+  #  UPGRADE-PFAD C — Morphik  (multimodales/visuelles RAG)
+  #  [EXPERIMENTELL] Starten:  docker compose --profile morphik up -d
+  #  Danach in agent: MORPHIK_API_URL setzen -> der Agent bekommt ein
+  #  zusaetzliches Tool "retrieve_multimodal". Siehe ./morphik/README.md.
+  # ==========================================================================
+  morphik-postgres:
+    profiles: ["morphik"]
+    image: pgvector/pgvector:pg16
+    container_name: morphik_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=morphik
+      - POSTGRES_PASSWORD=${MORPHIK_DB_PASSWORD:-bitte-aendern}
+      - POSTGRES_DB=morphik
+    volumes:
+      - morphik-pg-data:/var/lib/postgresql/data
+    networks:
+      aistack-core:
+        aliases:
+          - postgres      # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
+
+  morphik-redis:
+    profiles: ["morphik"]
+    image: redis:7-alpine
+    container_name: morphik_redis
+    restart: unless-stopped
+    networks:
+      aistack-core:
+        aliases:
+          - redis          # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
+
+  morphik:
+    profiles: ["morphik"]
+    image: ghcr.io/morphik-org/morphik-core:latest   # [VERIFY] exaktes Image/Tag
+    container_name: morphik
+    restart: unless-stopped
+    ports:
+      - "8083:8000"
+    environment:
+      - POSTGRES_URI=postgresql+asyncpg://morphik:${MORPHIK_DB_PASSWORD:-bitte-aendern}@postgres:5432/morphik
+      - PGPASSWORD=${MORPHIK_DB_PASSWORD:-bitte-aendern} # <--- DIESE ZEILE UNBEDINGT ERGÄNZEN
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # Morphik kann Embeddings/Completions lokal beziehen (in morphik.toml konfigurieren):
+      - OPENAI_BASE_URL=http://vllm-main:5568/v1
+      - OPENAI_API_KEY=not-needed
+      - JWT_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
+    networks:
+      - aistack-core
+    depends_on:
+      - morphik-postgres
+      - morphik-redis
+
+volumes:
+  qdrant-data:
+  embeddings-data:
+  code-sandbox-data:
+  open-webui-data:
+  ocu-pg-data:
+  morphik-pg-data:
+
+networks:
+  # Eigene, von DIESEM Compose erzeugte Netze:
+  aistack-core:
+    name: aistack-core
+    driver: bridge
+  aistack-sandbox:
+    name: aistack-sandbox
+    driver: bridge
+    internal: true            # luftdicht: kein Egress
+  # Gemeinsames Netz mit dem RAGFlow-Sub-Bundle (einmalig erstellen):
+  #   docker network create aistack-rag
+  aistack-rag:
+    name: aistack-rag
+    external: true

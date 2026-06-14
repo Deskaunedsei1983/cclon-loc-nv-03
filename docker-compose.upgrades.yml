@@ -1,0 +1,133 @@
+# ============================================================================
+#  UPGRADE-PFADE (Overlay)  —  bewusst getrennt vom Kernstack fuer Uebersicht
+#  ---------------------------------------------------------------------------
+#  Wird IMMER zusammen mit der Kern-Compose verwendet:
+#     docker compose -f docker-compose.yml -f docker-compose.upgrades.yml \
+#                    --profile <profil> up -d
+#  Bequemer:  ./start.sh <profil>      (z.B. ./start.sh morphik computer-use)
+#
+#  Jeder Dienst haengt an einem Profil -> ohne --profile startet NICHTS davon.
+#  Profile:  microvm | computer-use | morphik
+# ============================================================================
+
+services:
+
+  # ---------- UPGRADE/Container-Option — Microsandbox-microVM-Executor ------
+  # [EXPERIMENTELL] Containerisierte Variante des microVM-Executors.
+  # EMPFOHLEN ist der HOST-Betrieb (siehe ../microsandbox-executor/README.md) —
+  # microVMs/libkrun laufen am stabilsten direkt auf dem Host. Diese Container-
+  # Variante braucht /dev/kvm + NET_ADMIN + /dev/net/tun und ist heikler.
+  # Bei Nutzung: im Agent MSB_EXECUTOR_URL=http://microsandbox-executor:8077/run setzen.
+  microsandbox-executor:
+    profiles: ["microvm"]
+    build:
+      context: ./microsandbox-executor
+    image: microsandbox-executor:local
+    pull_policy: build      # lokal bauen, nicht aus Registry ziehen
+    container_name: microsandbox_executor
+    restart: unless-stopped
+    ports:
+      - "8077:8077"
+    devices:
+      - "/dev/kvm:/dev/kvm"
+    cap_add:
+      - NET_ADMIN
+    # /dev/net/tun fuer microVM-Netzwerk (falls noetig):
+    # devices: zusaetzlich "/dev/net/tun:/dev/net/tun"
+    environment:
+      - MSB_IMAGE=${MSB_IMAGE:-python}
+    networks:
+      - aistack-core
+
+  # ---------- UPGRADE — open-computer-use (Browser + Office-Skills) ---------
+  # [EXPERIMENTELL] ACHTUNG: Manager braucht docker.sock = HOST-Vertrauensgrenze.
+  # Fuer echte Isolation gVisor/Kata. Siehe ./open-computer-use/README.md.
+  ocu-postgres:
+    profiles: ["computer-use"]
+    image: postgres:16-alpine
+    container_name: ocu_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=ocu
+      - POSTGRES_PASSWORD=${OCU_DB_PASSWORD:-bitte-aendern}
+      - POSTGRES_DB=ocu
+    volumes:
+      - ocu-pg-data:/var/lib/postgresql/data
+    networks:
+      - aistack-core
+
+  open-computer-use:
+    profiles: ["computer-use"]
+    image: ghcr.io/wide-moat/open-computer-use:latest   # [VERIFY] exaktes Image/Tag
+    container_name: open_computer_use
+    restart: unless-stopped
+    ports:
+      - "8084:8084"
+    environment:
+      - DATABASE_URL=postgresql://ocu:${OCU_DB_PASSWORD:-bitte-aendern}@ocu-postgres:5432/ocu
+      - OPENAI_BASE_URL=http://vllm-main:5568/v1
+      - OPENAI_API_KEY=not-needed
+      - MODEL=qwen-main
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock     # Vertrauensgrenze! siehe README
+    networks:
+      - aistack-core
+    depends_on:
+      - ocu-postgres
+
+  # ---------- UPGRADE C — Morphik (multimodales/visuelles RAG) -------------
+  # [EXPERIMENTELL] Danach in .env MORPHIK_API_URL setzen + agent neu starten
+  # -> Agent bekommt Tool "retrieve_multimodal". Siehe ./morphik/README.md.
+  morphik-postgres:
+    profiles: ["morphik"]
+    image: pgvector/pgvector:pg16
+    container_name: morphik_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=morphik
+      - POSTGRES_PASSWORD=${MORPHIK_DB_PASSWORD:-bitte-aendern}
+      - POSTGRES_DB=morphik
+    volumes:
+      - morphik-pg-data:/var/lib/postgresql/data
+    networks:
+      aistack-core:
+        aliases:
+          - postgres      # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
+
+  morphik-redis:
+    profiles: ["morphik"]
+    image: redis:7-alpine
+    container_name: morphik_redis
+    restart: unless-stopped
+    networks:
+      aistack-core:
+        aliases:
+          - redis          # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
+
+  morphik:
+    profiles: ["morphik"]
+    image: ghcr.io/morphik-org/morphik-core:latest   # [VERIFY] exaktes Image/Tag
+    container_name: morphik
+    restart: unless-stopped
+    ports:
+      - "8083:8000"
+    environment:
+      - POSTGRES_URI=postgresql+asyncpg://morphik:${MORPHIK_DB_PASSWORD:-bitte-aendern}@postgres:5432/morphik
+      - PGPASSWORD=${MORPHIK_DB_PASSWORD:-bitte-aendern} # <--- DIESE ZEILE UNBEDINGT ERGÄNZEN
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - OPENAI_BASE_URL=http://vllm-main:5568/v1
+      - OPENAI_API_KEY=not-needed
+      - JWT_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
+    networks:
+      - aistack-core
+    depends_on:
+      - morphik-postgres
+      - morphik-redis
+
+volumes:
+  ocu-pg-data:
+  morphik-pg-data:
+
+# Kein networks-Block: aistack-core wird von der Kern-Compose definiert/erzeugt.
+# Diese Overlay-Datei wird immer mit -f docker-compose.yml kombiniert.

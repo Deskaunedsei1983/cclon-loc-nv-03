@@ -1,0 +1,4 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+# Microsandbox-Python-SDK (microVM-Sandboxen, libkrun)
+microsandbox==0.5.5
