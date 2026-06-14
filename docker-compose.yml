@@ -32,7 +32,7 @@ services:
   #  Erreichbar bleibt es – wie gehabt – unter Hostname "vllm-main:5568",
   #  Modell-ID "main" (zusaetzlich weiter als "qwen-main").
   vllm-main:
-    image: vllm/vllm-openai:nightly
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}   # Tag via .env -> VLLM_IMAGE
     container_name: vllm_main
     profiles: ["main-qwen"]
     restart: unless-stopped
@@ -85,7 +85,7 @@ services:
   #  Per Netzwerk-Alias unter demselben Hostnamen "vllm-main:5568" erreichbar,
   #  served-model-name "main" -> Agent/OWUI/RAGFlow brauchen KEINE Aenderung.
   vllm-main-gemma:
-    image: vllm/vllm-openai:nightly        # aktuellstes vLLM (Diffusion + gemma4-Parser)
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}   # Tag via .env -> VLLM_IMAGE (gepinnt, >= dev332, Diffusion + gemma4)
     container_name: vllm_main_gemma
     profiles: ["main-gemma"]
     restart: unless-stopped
@@ -143,7 +143,7 @@ services:
 
   # ===================== 2) HELFER-LLM (kleine Tasks) =======================
   vllm-helper:
-    image: vllm/vllm-openai:nightly
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}   # Tag via .env -> VLLM_IMAGE
     container_name: vllm_helper
     restart: unless-stopped
     ipc: host

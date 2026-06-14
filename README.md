@@ -83,8 +83,13 @@ nennt 4) · Env `VLLM_USE_V2_MODEL_RUNNER=1` · Env `VLLM_ATTENTION_BACKEND=TRIT
 erprobt) · `--tool-call-parser gemma4 --reasoning-parser gemma4 --enable-auto-tool-choice` ·
 `--override-generation-config '{"max_new_tokens":null}'` (Diffusion) ·
 `--default-chat-template-kwargs '{"enable_thinking":true}'`. NVFP4 wird i. d. R.
-automatisch erkannt; sonst `--quantization modelopt` ergänzen. Image bleibt
-`vllm/vllm-openai:nightly` (aktuellstes vLLM).
+automatisch erkannt; sonst `--quantization modelopt` ergänzen.
+
+**vLLM-Version:** Gemma-Diffusion braucht vLLM **≥ `0.22.1rc1.dev332`**. Daher ist das
+Image für alle drei vLLM-Dienste über `.env` → **`VLLM_IMAGE`** pinnbar (statt des
+rollierenden `:nightly`). Vorbelegt mit einem geprüften, reproduzierbaren Build
+`vllm/vllm-openai:cu129-nightly-54bbf516…` (= `dev332` + 172 Commits, **CUDA 12.9**
+für SM120/Blackwell). Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/vllm/vllm-openai/tags).
 
 ---
 
