@@ -13,13 +13,14 @@
 use_default_settings:
   engines:
     keep_only:
-      - duckduckgo
-      - brave
-      - bing
-      - mojeek
-      - qwant
-      - wikipedia
-      - wikidata
+      # Bewusst OHNE duckduckgo/google/startpage/qwant -> das sind die CAPTCHA-/
+      # Block-Schleudern fuer Server-IPs (DDG CAPTCHA-t praktisch bei JEDER Anfrage).
+      # Diese hier scrapen aus einer Server-IP am vertraeglichsten:
+      - mojeek          # unabhaengiger Index, blockt fast nie -> Arbeitspferd
+      - brave           # eigener Index, meist ok
+      - bing            # breit, meist ok
+      - wikipedia       # API: Fakten/Entitaeten (403 ist meist transient, heilt selbst)
+      - wikidata        # API
 
 server:
   # secret_key wird per ENV (SEARXNG_SECRET) gesetzt
@@ -37,10 +38,20 @@ search:
     SearxEngineAccessDenied: 120      # 2 min statt 180
 
 outgoing:
-  request_timeout: 6.0           # statt 3s Default -> langsame Engines fallen nicht sofort raus
+  request_timeout: 8.0           # statt 3s Default -> langsame Engines (Mojeek/Brave) fallen nicht raus
   pool_connections: 100
   pool_maxsize: 20
   enable_http2: true
+  # --- Hebel (2): rotierende Egress-IP via Tor (GRATIS, keine offizielle API) --
+  # Loest das Server-IP-Problem: jede Anfrage/Retry kann ueber eine andere
+  # Tor-Exit-IP gehen -> kein dauerhafter IP-Block. Erst aktivieren, wenn der
+  # 'tor'-Dienst laeuft (siehe docker-compose). Hinweis: langsamer; Google/DDG
+  # blocken Tor weiterhin (bleiben deshalb ohnehin aus der Engine-Liste).
+  # using_tor_proxy: true
+  # proxies:
+  #   all://:
+  #     - socks5h://tor:9050
+  # proxy_request_redundancy: 2   # pro Retry andere Exit-IP -> Last verteilen
 
 # Keine externen Metriken/Telemetrie.
 general:
