@@ -345,6 +345,7 @@ services:
       - WEB_SEARCH_ENGINE=searxng
       - SEARXNG_QUERY_URL=http://presidio-proxy:8080/search?q=<query>
       - WEB_SEARCH_RESULT_COUNT=5
+      - WEB_SEARCH_CONCURRENT_REQUESTS=2   # Burst drosseln -> Engines werden seltener CAPTCHA-gesperrt
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
       - CODE_EXECUTION_JUPYTER_URL=http://code-sandbox:8888

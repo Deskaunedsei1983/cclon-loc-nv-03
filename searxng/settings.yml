@@ -1,6 +1,25 @@
-# Minimal-Settings fuer SearXNG als JSON-API hinter dem Masking-Proxy.
+# Settings fuer SearXNG als JSON-API hinter dem Masking-Proxy.
 # WICHTIG: 'json' muss in den Formaten stehen, sonst liefert ?format=json 403.
-use_default_settings: true
+#
+# Robustheit gegen "No sources found": Frei scrapbare Engines blocken Server-IPs
+# schnell mit CAPTCHA/429 (siehe Container-Logs: duckduckgo CAPTCHA,
+# SearxEngineTooManyRequestsException). Gegenmassnahmen hier:
+#  - kuratierte, tolerante Engine-Auswahl (Google/Startpage raus = CAPTCHA-Schleuder
+#    fuer Server-IPs; Mojeek/Brave/Bing/Wikipedia sind deutlich vertraeglicher)
+#  - hoehere Timeouts, damit langsame Engines nicht sofort rausfallen
+#  - kuerzere Sperrzeiten, damit eine Engine nach einem Block schnell zurueckkommt
+#    (Default: CAPTCHA sperrt eine Engine 1 Stunde!)
+# Zusaetzlich in OWUI: WEB_SEARCH_CONCURRENT_REQUESTS niedrig -> weniger Burst.
+use_default_settings:
+  engines:
+    keep_only:
+      - duckduckgo
+      - brave
+      - bing
+      - mojeek
+      - qwant
+      - wikipedia
+      - wikidata
 
 server:
   # secret_key wird per ENV (SEARXNG_SECRET) gesetzt
@@ -11,6 +30,17 @@ search:
   formats:
     - html
     - json
+  # Engine nach einem Block schneller wieder freigeben (Defaults sind viel hoeher):
+  suspended_times:
+    SearxEngineCaptcha: 600           # 10 min statt 3600 (1 h)
+    SearxEngineTooManyRequests: 120   # 2 min statt 180
+    SearxEngineAccessDenied: 120      # 2 min statt 180
+
+outgoing:
+  request_timeout: 6.0           # statt 3s Default -> langsame Engines fallen nicht sofort raus
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
 
 # Keine externen Metriken/Telemetrie.
 general:
