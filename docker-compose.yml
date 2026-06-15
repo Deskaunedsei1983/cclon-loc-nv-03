@@ -233,7 +233,12 @@ services:
     expose:
       - "8080"
     volumes:
-      - ./searxng:/etc/searxng:rw
+      # NICHT ./searxng direkt mounten: der Container (UID 977) patcht settings.yml
+      # beim Start per 'sed -i' und wuerde damit die GIT-Datei umschreiben/chownen
+      # -> 'git pull' braeuchte danach sudo. Stattdessen den gitignore-ten
+      # Runtime-Ordner mounten; start.sh spiegelt ./searxng/settings.yml hinein.
+      # Schnell-Reload nach Settings-Aenderung: siehe README.
+      - ./searxng/runtime:/etc/searxng:rw
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET:-bitte-zufalls-string-setzen}
       - SEARXNG_BASE_URL=http://searxng:8080/

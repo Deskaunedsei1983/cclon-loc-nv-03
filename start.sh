@@ -55,6 +55,19 @@ chmod +x ./ragflow/entrypoint.sh 2>/dev/null || true   # +x kann beim Entpacken 
 retry 3 ragflow_up
 
 echo ">> [3/3] Kernstack starten"
+
+# --- SearXNG-Settings in gitignore-ten Runtime-Ordner spiegeln ---------------
+#  Der searxng-Container (UID 977) patcht settings.yml beim Start per 'sed -i'
+#  und wuerde so die GIT-Datei umschreiben/chownen -> danach braucht 'git pull'
+#  sudo. Loesung: der Container mountet ./searxng/runtime (gitignored); die
+#  git-getrackte ./searxng/settings.yml wird nur HINEINKOPIERT (cp -f kommt ohne
+#  sudo aus, da das runtime-Verzeichnis dem User gehoert).
+if [ -f searxng/settings.yml ]; then
+  mkdir -p searxng/runtime
+  cp -f searxng/settings.yml searxng/runtime/settings.yml
+  echo "   + searxng/settings.yml -> searxng/runtime/ gespiegelt"
+fi
+
 COMPOSE_FILES=(-f docker-compose.yml)
 
 # --- Hauptmodell-Profil robust aus .env (COMPOSE_PROFILES) bestimmen --------

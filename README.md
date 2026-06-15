@@ -463,3 +463,16 @@ docker compose up -d agent      # Agent neu (z.B. nach AGENT_IMPL- oder RAGFLOW_
 ./stop.sh --volumes             # inkl. Daten löschen
 docker compose build --no-cache agent code-sandbox presidio-proxy
 ```
+
+> **`git pull` scheitert an `searxng/settings.yml` („Keine Berechtigung")?** Der
+> SearXNG-Container läuft als UID 977 und patcht `settings.yml` beim Start per
+> `sed -i` → er würde die git-Datei chownen. Deshalb mountet der Container jetzt
+> `searxng/runtime/` (gitignored), **nicht** die git-Datei; `./start.sh` spiegelt
+> `searxng/settings.yml` dorthin. So bleibt `git pull` **ohne `sudo`**. Nur die
+> SearXNG-Settings geändert und schnell neu laden (ohne ganzes `start.sh`):
+> ```bash
+> cp -f searxng/settings.yml searxng/runtime/settings.yml
+> docker compose -f docker-compose.yml restart searxng
+> ```
+> Einmalig die alten, vom Container gechownten Dateien zurückholen (falls noch nötig):
+> `sudo chown -R "$USER:$USER" searxng/`

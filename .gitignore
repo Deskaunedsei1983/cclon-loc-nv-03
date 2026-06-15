@@ -20,3 +20,6 @@ node_modules/
 # Python-Bytecode
 __pycache__/
 *.pyc
+
+# SearXNG-Runtime (Container patcht settings.yml per sed -> nicht die git-Datei mounten)
+searxng/runtime/
