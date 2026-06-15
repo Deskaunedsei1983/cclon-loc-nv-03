@@ -93,6 +93,42 @@ für SM120/Blackwell). Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](htt
 
 ---
 
+## 1b. Gemma-Reasoning: `<|channel>thought`-Leak bereinigen
+
+Taucht beim Gemma-Modell roher Denk-Text wie `<|channel>thought …` in der Antwort
+auf, ist das ein **bekannter vLLM-Bug** ([#38855](https://github.com/vllm-project/vllm/issues/38855)):
+der `gemma4`-Reasoning-Parser trennt `reasoning_content` nicht, weil
+`skip_special_tokens` die Kanal-Marker **vor** dem Parser entfernt. Deine Serve-Flags
+sind korrekt (entsprechen dem offiziellen Gemma4-Recipe) — der echte Fix muss upstream kommen.
+
+**1) Diagnose — zeigt das ROHE Format (bitte Output sichern):**
+```bash
+curl -s http://localhost:5568/v1/chat/completions -H 'Content-Type: application/json' -d '{
+  "model":"main",
+  "messages":[{"role":"user","content":"Nenne 3 nachhaltige ETFs. Denk kurz nach."}],
+  "max_tokens":400
+}' | python3 -m json.tool
+```
+Prüfen: hat `choices[0].message` ein Feld `reasoning`/`reasoning_content` (→ vLLM trennt
+korrekt, reines OWUI-Render-Thema) **oder** stecken die `<|channel>`-Marker in `content`
+(→ der Bug)?
+
+**2) Sofort-Workaround (OWUI-Filter):** `open-webui/filters/gemma_reasoning_cleaner.py`
+importieren: *OWUI → Admin → Functions → „+" → Code einfügen → aktivieren*, dann dem
+Modell `main`/`gemma-main` (oder global) zuweisen. Er übersetzt
+`<|channel>thought … <channel|>` in natives `<think>…</think>` (einklappbares „Thinking")
+bzw. entfernt die Marker.
+
+**3) Saubere Notlösung ohne Thinking:** im Gemma-Serve-Command (docker-compose.yml)
+`--default-chat-template-kwargs '{"enable_thinking":false}'` → kein Denk-Kanal, kein Leak
+(dafür keine Chain-of-Thought). Vorab live testbar, indem du im curl oben
+`"chat_template_kwargs":{"enable_thinking":false}` ergänzt.
+
+> Status verfolgen: [vllm#38855](https://github.com/vllm-project/vllm/issues/38855). Sobald
+> upstream gefixt, einfach ein neueres `VLLM_IMAGE`-Nightly ziehen — dann ist der Filter überflüssig.
+
+---
+
 ## 2. Was du bekommst (claude.ai-Vergleich)
 
 | claude.ai | Hier durch |
