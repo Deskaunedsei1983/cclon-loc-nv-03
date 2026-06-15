@@ -42,18 +42,16 @@ outgoing:
   pool_connections: 100
   pool_maxsize: 20
   enable_http2: true
-  # --- Hebel (2): rotierende Egress-IP via Tor (GRATIS, keine offizielle API) --
-  # AKTIV: SearXNG routet alle Engine-Requests ueber den 'tor'-Dienst -> jede
-  # Anfrage kann ueber eine andere Tor-Exit-IP gehen, kein dauerhafter IP-Block.
-  # SearXNG prueft beim Start via check.torproject.org, dass es WIRKLICH Tor ist
-  # (braucht den 'tor'-Container; sonst startet searxng neu, bis Tor bereit ist).
-  # Hinweis: langsamer; Google/DDG/Wikipedia koennen Tor-Exits blocken -> Mojeek/
-  # Brave/Bing sind die Tor-Arbeitspferde. Abschalten: die 3 Zeilen unten
-  # auskommentieren + 'docker compose -f docker-compose.yml restart searxng'.
-  using_tor_proxy: true
-  proxies:
-    all://:
-      - socks5h://tor:9050
+  # --- Hebel (2): Tor-Egress — DEAKTIVIERT (Test-Ergebnis) -------------------
+  # Test ergab: Tor laeuft ({"IsTor":true}), ABER die Engines liefern ueber
+  # Tor-Exit-IPs LEERE Ergebnisse (brave/wikipedia 429/403; mojeek/bing HTTP 200
+  # aber 0 Treffer = Soft-Block). Tor macht es hier also SCHLECHTER -> direkter
+  # Egress. Wieder einschalten (nur falls deine SERVER-IP der Flaschenhals ist):
+  # die 4 Zeilen unten einkommentieren + restart searxng (tor-Container laeuft eh).
+  # using_tor_proxy: true
+  # proxies:
+  #   all://:
+  #     - socks5h://tor:9050
 
 # Keine externen Metriken/Telemetrie.
 general:
