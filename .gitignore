@@ -16,3 +16,7 @@ venv/
 node_modules/
 **/.env
 **/.log
+
+# Python-Bytecode
+__pycache__/
+*.pyc
