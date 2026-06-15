@@ -43,15 +43,17 @@ outgoing:
   pool_maxsize: 20
   enable_http2: true
   # --- Hebel (2): rotierende Egress-IP via Tor (GRATIS, keine offizielle API) --
-  # Loest das Server-IP-Problem: jede Anfrage/Retry kann ueber eine andere
-  # Tor-Exit-IP gehen -> kein dauerhafter IP-Block. Erst aktivieren, wenn der
-  # 'tor'-Dienst laeuft (siehe docker-compose). Hinweis: langsamer; Google/DDG
-  # blocken Tor weiterhin (bleiben deshalb ohnehin aus der Engine-Liste).
-  # using_tor_proxy: true
-  # proxies:
-  #   all://:
-  #     - socks5h://tor:9050
-  # proxy_request_redundancy: 2   # pro Retry andere Exit-IP -> Last verteilen
+  # AKTIV: SearXNG routet alle Engine-Requests ueber den 'tor'-Dienst -> jede
+  # Anfrage kann ueber eine andere Tor-Exit-IP gehen, kein dauerhafter IP-Block.
+  # SearXNG prueft beim Start via check.torproject.org, dass es WIRKLICH Tor ist
+  # (braucht den 'tor'-Container; sonst startet searxng neu, bis Tor bereit ist).
+  # Hinweis: langsamer; Google/DDG/Wikipedia koennen Tor-Exits blocken -> Mojeek/
+  # Brave/Bing sind die Tor-Arbeitspferde. Abschalten: die 3 Zeilen unten
+  # auskommentieren + 'docker compose -f docker-compose.yml restart searxng'.
+  using_tor_proxy: true
+  proxies:
+    all://:
+      - socks5h://tor:9050
 
 # Keine externen Metriken/Telemetrie.
 general:

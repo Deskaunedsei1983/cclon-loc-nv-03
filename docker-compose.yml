@@ -239,6 +239,23 @@ services:
       - SEARXNG_BASE_URL=http://searxng:8080/
     networks:
       - aistack-core
+    depends_on:
+      - tor
+
+  # ===================== 5b) TOR (Egress-Proxy fuer SearXNG) ================
+  #  Rotierende Tor-Exit-IP gegen Server-IP-CAPTCHAs (gratis, KEINE offizielle
+  #  API). SearXNG routet seine Engine-Requests via socks5h://tor:9050 (siehe
+  #  searxng/settings.yml -> outgoing.using_tor_proxy). Kein Port nach aussen.
+  #  Tor braucht ~10-30s Bootstrap -> searxng startet beim ersten Mal evtl. 1x neu.
+  #  Abschalten: in settings.yml using_tor_proxy auskommentieren + restart searxng.
+  tor:
+    image: osminogin/tor-simple:latest    # minimaler Tor-SOCKS-Proxy (9050, 0.0.0.0)
+    container_name: tor
+    restart: unless-stopped
+    expose:
+      - "9050"
+    networks:
+      - aistack-core
 
   # ===================== 6) PRESIDIO-MASKING-PROXY ==========================
   presidio-proxy:
