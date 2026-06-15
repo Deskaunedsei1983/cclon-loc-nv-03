@@ -351,8 +351,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - "OPENAI_API_BASE_URLS=http://vllm-main:5568/v1;http://agent:9000/v1"
-      - "OPENAI_API_KEYS=not-needed;not-needed"
+      - "OPENAI_API_BASE_URLS=http://vllm-main:5568/v1;http://vllm-helper:30001/v1;http://agent:9000/v1"
+      - "OPENAI_API_KEYS=not-needed;not-needed;not-needed"
       - WEBUI_AUTH=false
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
       - ANONYMIZED_TELEMETRY=false
@@ -363,6 +363,11 @@ services:
       - SEARXNG_QUERY_URL=http://presidio-proxy:8080/search?q=<query>
       - WEB_SEARCH_RESULT_COUNT=3          # weniger Folge-Fetches -> weniger Last/Trigger
       - WEB_SEARCH_CONCURRENT_REQUESTS=1   # Burst minimieren -> Engines werden seltener CAPTCHA-gesperrt
+      # KURZE Suchqueries aus dem Prompt bauen (statt 50-Wort-Prompt = Bot-Trigger).
+      # vLLM ist OpenAI-kompatibel -> OWUI behandelt die Modelle als "external":
+      - ENABLE_SEARCH_QUERY_GENERATION=true
+      - TASK_MODEL_EXTERNAL=qwen-helper    # leichter Helper baut Titel/Tags/Suchqueries (kein Reasoning-Leak)
+      - TASK_MODEL=qwen-helper
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
       - CODE_EXECUTION_JUPYTER_URL=http://code-sandbox:8888
