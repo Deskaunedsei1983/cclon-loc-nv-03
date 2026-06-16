@@ -230,10 +230,12 @@ RAGFlow bringt **keine** Modelle mit — du verkabelst es mit deinem vLLM:
 2. **Model Providers** → einen **OpenAI-kompatiblen** Anbieter hinzufügen:
    - Chat-Modell: Base-URL **`http://host.docker.internal:5568/v1`**, Modell `main`, Key beliebig.
      *(`main` zeigt immer auf das aktive Hauptmodell — überlebt das Qwen⇄Gemma-Umschalten.)*
-   - Embedding-Modell: entweder RAGFlows eigenes TEI-Profil aktivieren
-     (`COMPOSE_PROFILES=...,tei-gpu` in `ragflow/.env`) **oder** ein
-     OpenAI-kompatibles Embedding eintragen (Base-URL `http://host.docker.internal:8082/v1`).
-     *(Das ist RAGFlow-intern — getrennt vom `embeddings`-Dienst, der Mem0 versorgt.)*
+   - Embedding-Modell (**empfohlen**): den starken, multilingualen vLLM-Embedder
+     eintragen — OpenAI-kompatibel, Base-URL **`http://host.docker.internal:8091/v1`**,
+     Modell **`qwen3-embed`**, Dimension **2560**. *(Das ist der `vllm-embed`-Dienst,
+     Qwen3-Embedding-4B; deutlich stärker als bge-m3.)*
+     Alternativen: RAGFlows eigenes TEI-Profil (`COMPOSE_PROFILES=...,tei-gpu` in
+     `ragflow/.env`) oder das bge-m3-`embeddings` (`…:8082/v1`, versorgt sonst Mem0).
 3. **Dataset** anlegen, Dokumente hochladen, Parsing abwarten.
 4. **API-Key** erzeugen (RAGFlow → Settings → API) und die **Dataset-ID** notieren.
 5. In die root-`.env`: `RAGFLOW_API_KEY=...` und `RAGFLOW_DATASET_IDS=...`, dann:
@@ -391,8 +393,9 @@ Drei Wege, das bei Bedarf nachzurüsten:
 | vllm-main (Qwen 35B-A3B NVFP4, 26k, util 0.35, **Vision an** + MTP-Draft) | ~30–34 GB |
 | *— ODER —* vllm-main-gemma (Gemma 26B-A4B NVFP4, **256k**, util 0.35, max-num-seqs 2) | ~30–34 GB |
 | vllm-helper (4B, 32k, util 0.15) | ~10–12 GB |
-| embeddings (bge-m3) | ~2–3 GB |
-| **Summe / frei** | **~44–48 GB / ~48 GB frei** |
+| embeddings (bge-m3, Mem0) | ~2–3 GB |
+| vllm-embed (Qwen3-Embedding-4B, FP8, util 0.10, RAGFlow) | ~5–6 GB |
+| **Summe / frei** | **~50–54 GB / ~42 GB frei** |
 
 > **Qwen und Gemma schließen sich aus** (Profil-Umschaltung `main-qwen`/`main-gemma`) →
 > es liegt **nie mehr als ein** Hauptmodell im VRAM. `util 0.35` deckelt die
@@ -434,6 +437,11 @@ Konflikt; daher bleibt RAGFlow standardmäßig auf CPU.
   (du hattest es im Einsatz) — bei älterem vLLM ggf. entfernen.
 - **embeddings-Image-Tag** mit SM120-Support; **OpenAI-Route** `/v1/embeddings` von TEI für Mem0
   (sonst Mem0-Embedder auf provider `huggingface` umstellen).
+- **vllm-embed** (`vllm-embed`, Qwen3-Embedding-4B): Flag `--runner pooling` (aktuelles vLLM)
+  vs. `--task embed` (älter) gegen dein Nightly prüfen; `/v1/embeddings` testen:
+  `curl -s localhost:8091/v1/embeddings -H 'Content-Type: application/json' -d '{"model":"qwen3-embed","input":"hallo welt"}' | head -c 200`.
+  `--quantization fp8` notfalls weglassen oder vorquantisierten FP8/AWQ-Checkpoint nutzen.
+  In RAGFlow die **Dimension 2560** (4B) bzw. 4096 (8B) eintragen.
 - **RAGFlow-Retrieval-API** (`/api/v1/retrieval`, Payload, API-Key-Format) gegen deine RAGFlow-Version
   — in `agent/common.py` markiert.
 - **PydanticAI/Mem0/LangGraph-Versionen** (in `requirements.txt` gepinnt; Kompat-Shim für `.output`/`.data` drin).

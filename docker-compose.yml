@@ -210,6 +210,51 @@ services:
     networks:
       - aistack-core
 
+  # ===================== 3b) EMBEDDINGS-LLM fuer RAGFlow (vLLM, Qwen3) =======
+  #  Hochwertiges, MULTILINGUALES Embedding (100+ Sprachen) fuer RAGFlow-Retrieval
+  #  -> deutlich staerker als bge-m3 (MTEB-multilingual ~69.5). Versorgt RAGFlow
+  #  (NICHT Mem0 -> das bleibt auf bge-m3, sonst Qdrant-Re-Index noetig).
+  #  RAGFlow verbindet sich per  http://host.docker.internal:8091/v1 , Modell
+  #  "qwen3-embed", Dimension 2560.
+  vllm-embed:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}
+    container_name: vllm_embed
+    restart: unless-stopped
+    ipc: host
+    shm_size: "4gb"
+    ulimits:
+      memlock: -1
+    ports:
+      - "8091:8091"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # VRAM-sparsam: FP8-Gewichte (~5-6 GB) + niedriger util-Deckel. Embedding-Modelle
+    # haben KEINEN KV-Cache -> --kv-cache-dtype entfaellt; util ist nur eine Obergrenze.
+    # 4B: 2560 Dim, bis 32k Kontext. Max. Qualitaet (mehr VRAM): Qwen/Qwen3-Embedding-8B (4096 Dim).
+    # [VERIFY] '--runner pooling' (aktuelles vLLM) bzw. '--task embed' (aelter);
+    #          FP8 ggf. ueber vorquantisierten Checkpoint statt online '--quantization fp8'.
+    command: >
+      Qwen/Qwen3-Embedding-4B
+      --served-model-name qwen3-embed
+      --runner pooling
+      --host 0.0.0.0
+      --port 8091
+      --trust-remote-code
+      --quantization fp8
+      --max-model-len 8192
+      --gpu-memory-utilization 0.10
+    networks:
+      - aistack-core
+
   # ===================== 4) QDRANT (Mem0-Vektorstore, on-disk/NVMe) =========
   qdrant:
     image: qdrant/qdrant:latest
