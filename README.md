@@ -88,8 +88,8 @@ automatisch erkannt; sonst `--quantization modelopt` ergänzen.
 **vLLM-Version:** Gemma-Diffusion braucht vLLM **≥ `0.22.1rc1.dev332`**. Daher ist das
 Image für alle drei vLLM-Dienste über `.env` → **`VLLM_IMAGE`** pinnbar (statt des
 rollierenden `:nightly`). Vorbelegt mit einem geprüften, reproduzierbaren Build
-`vllm/vllm-openai:cu129-nightly-54bbf516…` (= `dev332` + 172 Commits, **CUDA 12.9**
-für SM120/Blackwell). Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/vllm/vllm-openai/tags).
+`vllm/vllm-openai:cu129-nightly-6607a80d…` (2026‑06‑16, **CUDA 12.9** für
+SM120/Blackwell, weit über `dev332`). Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/vllm/vllm-openai/tags).
 
 ---
 
