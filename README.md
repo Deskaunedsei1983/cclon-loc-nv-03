@@ -394,8 +394,11 @@ Drei Wege, das bei Bedarf nachzurüsten:
 | *— ODER —* vllm-main-gemma (Gemma 26B-A4B NVFP4, **256k**, util 0.35, max-num-seqs 2) | ~30–34 GB |
 | vllm-helper (4B, 32k, util 0.15) | ~10–12 GB |
 | embeddings (bge-m3, Mem0) | ~2–3 GB |
-| vllm-embed (Qwen3-Embedding-4B, FP8, util 0.10, RAGFlow) | ~5–6 GB |
-| **Summe / frei** | **~50–54 GB / ~42 GB frei** |
+| vllm-embed (Qwen3-Embedding-4B, FP8, util-Deckel 0.15, RAGFlow) | ~7–10 GB real |
+| **Summe / frei** | **~52–58 GB / ~38 GB frei** |
+
+> `--gpu-memory-utilization` ist nur eine **Obergrenze**, kein fixer Verbrauch — Embedding-
+> Modelle füllen sie (kein KV-Cache) nicht aus. Realen Wert mit `nvidia-smi` prüfen.
 
 > **Qwen und Gemma schließen sich aus** (Profil-Umschaltung `main-qwen`/`main-gemma`) →
 > es liegt **nie mehr als ein** Hauptmodell im VRAM. `util 0.35` deckelt die

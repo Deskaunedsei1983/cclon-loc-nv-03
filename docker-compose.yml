@@ -237,11 +237,14 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # VRAM-sparsam: FP8-Gewichte (~5-6 GB) + niedriger util-Deckel. Embedding-Modelle
-    # haben KEINEN KV-Cache -> --kv-cache-dtype entfaellt; util ist nur eine Obergrenze.
-    # 4B: 2560 Dim, bis 32k Kontext. Max. Qualitaet (mehr VRAM): Qwen/Qwen3-Embedding-8B (4096 Dim).
-    # [VERIFY] '--runner pooling' (aktuelles vLLM) bzw. '--task embed' (aelter);
-    #          FP8 ggf. ueber vorquantisierten Checkpoint statt online '--quantization fp8'.
+    # VRAM: --gpu-memory-utilization ist eine OBERGRENZE (~14 GB von 96), KEIN fixer
+    # Verbrauch. Embedding-Modelle haben KEINEN KV-Cache -> der reale Bedarf ist
+    # Gewichte + Aktivierung (real eher ~7-10 GB; mit nvidia-smi pruefen!).
+    # 0.15 noetig, weil online-FP8 erst die FP16-Gewichte laedt (~8 GB Lade-Peak)
+    # und DANN quantisiert. Noch sparsamer -> vorquantisierten FP8-Checkpoint nutzen.
+    # max-model-len 4096 reicht fuer RAG-Chunks dick aus (Modell kann bis 32k);
+    # hoeher = mehr Aktivierungsspeicher. 4B: 2560 Dim. Max. Qualitaet: Qwen3-Embedding-8B.
+    # [VERIFY] '--runner pooling' (aktuelles vLLM) bzw. '--task embed' (aelter).
     command: >
       Qwen/Qwen3-Embedding-4B
       --served-model-name qwen3-embed
@@ -250,8 +253,8 @@ services:
       --port 8091
       --trust-remote-code
       --quantization fp8
-      --max-model-len 8192
-      --gpu-memory-utilization 0.10
+      --max-model-len 4096
+      --gpu-memory-utilization 0.15
     networks:
       - aistack-core
 
