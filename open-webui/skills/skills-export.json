@@ -1,0 +1,35 @@
+[
+  {
+    "id": "content-and-document-intelligence",
+    "name": "Content & Document Intelligence Engine",
+    "description": "Analysiert, vergleicht und extrahiert geschäftliche Dokumente, E-Mails (.eml) und führt strukturierte Konkurrenzanalysen durch.",
+    "content": "---\nname: content-and-document-intelligence\ndescription: Protokoll zur tiefen Textanalyse, Dokumenten-Extraktion und strukturierten Recherche.\n---\n\n## 1. Dokumenten-Vergleich & -Analyse\n- Beim Vergleichen von Dokumentenversionen extrahiere den Volltext und nutze Pythons 'difflib' auf Satz- oder Absatsebene.\n- Kategorisiere Änderungen strikt nach: Formatierung, geringfügige Umformulierung und substantielle Änderungen (Fristen, finanzielle Verpflichtungen, Haftungsausschlüsse). Generiere einen strukturierten Änderungsreport als Markdown.\n- Beim Einlesen von '.eml'-Dateien extrahiere Kopfzeilen (Von, An, Datum, Betreff) und bereinige den Body von HTML. Filter gezielt nach Deadlines, Beschlüssen und offenen Aufgaben.\n\n## 2. Strukturierte Recherche & Mitbewerber-Scraping\n- Zerlege komplexe Fragestellungen vorab autonom in 3-5 Untersuchungsachsen.\n- Nutze innerhalb der Sandbox bei Bedarf gezielte 'curl'-Abfragen mit simulierten User-Agent-Headern, um öffentlich zugängliche Seiten zu erfassen, und extrahiere Kerninformationen strukturiert via 'beautifulsoup4'.\n- Erstelle aus Mitbewerberdaten (Preise, Features) normalisierte Vergleichstabellen und überführe sie in übersichtliche Markdown-Zusammenfassungen inkl. Quellennachweis.\n",
+    "meta": {
+      "tags": []
+    },
+    "is_active": true,
+    "access_grants": []
+  },
+  {
+    "id": "data-intelligence-and-analytics",
+    "name": "Data Intelligence & Analytics Engine",
+    "description": "Verarbeitet massive Datenbestände, führt relationale SQL-Analysen durch und erstellt automatisierte Finanz- und Daten-Reports inklusive Charts.",
+    "content": "---\nname: data-intelligence-and-analytics\ndescription: Regelwerk für fortgeschrittene Datenanalyse, SQL und automatisierte Report-Erstellung.\n---\n\n## 1. Zero-Hardcoding & Datenakquisition\n- Schreibe niemals Arrays oder Dictionaries mit mehr als 10 Einträgen manuell in den Code. Nutze Bibliotheken (z. B. 'yfinance' für Finanzdaten, 'requests' für REST-APIs), um Daten programmatisch zu holen.\n- Falls echte Daten temporär blockiert sind, generiere repräsentative synthetische Daten mittels 'Faker' oder 'random' über Schleifen.\n\n## 2. SQL & Datenbank-Analyse\n- Verbinde dich sicher über Umgebungsvariablen (DB_HOST, etc.) mit PostgreSQL, MySQL oder SQLite. Schließe Verbindungen konsequent.\n- Erkunde immer zuerst das Schema (Tabellenstrukturen, Zeilenanzahl, Datentypen, Foreign Keys), bevor du Analyse-Queries schreibst.\n- Schreibe performantes SQL (Nutze explizite JOINs statt Subqueries, LIMIT-Klauseln bei Massendaten und Aggregationen). Lade Ergebnisse zur Weiterverarbeitung direkt in Polars-DataFrames.\n\n## 3. Mute STDOUT & Visualisierung\n- CRITICAL: Drucke niemals riesige DataFrames oder Dictionaries per 'print()' im Terminal ab! Große Textmengen sprengen das JSON-Chunk-Limit des Tool-Egress (128KB) und bringen das System zum Absturz. Nutze 'print()' nur für kurze Erfolgsmeldungen.\n- Erstelle Daten-Visualisierungen mit 'matplotlib' oder 'seaborn'. Speichere die Grafiken als PNG im Arbeitsverzeichnis.\n- Konsolidiere thematische Analysen immer in eine *einzelne* Excel-Datei mittels 'pandas.ExcelWriter' oder entsprechenden Polars-Engines über sauber getrennte Tabellenblätter.\n",
+    "meta": {
+      "tags": []
+    },
+    "is_active": true,
+    "access_grants": []
+  },
+  {
+    "id": "software-and-app-architect",
+    "name": "Software & App Architect Engine",
+    "description": "Baut vollständige Software-Projekte (FastAPI, Vue.js, Tailwind, DuckDB) und führt tiefgehende Code-Reviews durch.",
+    "content": "---\nname: software-and-app-architect\ndescription: Richtlinien für Software-Scaffolding und Code-Reviews in der Sandbox.\n---\n\n## 1. Full-Stack Entwicklung (FastAPI + Vue.js)\nWenn du Software-Architekturen baust:\n- API-Backend: Nutze Python mit FastAPI.\n- Datenhaltung: Nutze DuckDB für relationale/analytische Daten, Polars für High-Performance Processing.\n- Frontend: Initialisiere Web-UIs mit Vite, Vue.js und Tailwind CSS. Erstelle direkt ein demo-ready, modernes Dashboard mit Metriken und responsiven Tabellen (inkl. Such-/Filterfunktion).\n- Struktur: Generiere sinnvolle Seed-Daten. Führe am Ende 'git init' aus, erstelle eine saubere '.gitignore' und schreibe eine unmissverständliche 'README.md' mit den exakten Startbefehlen.\n\n## 2. Code-Review-Modus\nWenn du Code analysieren oder verändern sollst:\n- Nutze 'git diff' oder lies die Dateien vollständig, um den logischen Kontext und Imports zu verstehen.\n- Analysiere Code rigoros nach folgenden Kategorien: Sicherheit (Injections, harte Credentials), Korrektheit (Edge-Cases, Race-Conditions), Performance (N+1 Abfragen, Speicherblockaden) und Wartbarkeit.\n- Priorisiere Funde klar nach Relevanz (Kritisch, Warnung, Vorschlag) unter Angabe der exakten Zeilennummern und liefere die korrigierten Code-Snippets direkt mit.\n",
+    "meta": {
+      "tags": []
+    },
+    "is_active": true,
+    "access_grants": []
+  }
+]

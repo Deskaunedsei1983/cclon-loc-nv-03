@@ -404,6 +404,12 @@ services:
       - ENABLE_SEARCH_QUERY_GENERATION=true
       - TASK_MODEL_EXTERNAL=qwen-helper # leichter Helper baut Titel/Tags/Suchqueries (kein Reasoning-Leak)
       - TASK_MODEL=qwen-helper
+      # FIX "No sources found" TROTZ Treffern (bekanntes OWUI-Verhalten, #25038/#11016):
+      # OWUIs RAG-Pipeline umgehen -> SearXNG-Snippets DIREKT nutzen (kein langsames/
+      # blockiertes Seiten-Fetchen) UND ohne Embedding-Relevanzfilter, der sonst alle
+      # Web-Treffer verwirft. Loest gleichzeitig die Lahmheit durch die presidio-Pausen.
+      - BYPASS_WEB_SEARCH_WEB_LOADER=true
+      - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
       - CODE_EXECUTION_JUPYTER_URL=http://code-sandbox:8888
