@@ -419,6 +419,20 @@ plus MySQL/MinIO/Redis; deepdoc-Parsing läuft auf **CPU** (Profil `cpu`). Das
 GPU-Profil `gpu` für RAGFlow würde **alle GPUs reservieren** → mit vLLM in
 Konflikt; daher bleibt RAGFlow standardmäßig auf CPU.
 
+**RAGFlow im RAM-Sparmodus (≤ 20 GB, „HDD vor RAM"):**
+- **`DOC_ENGINE=infinity`** in `ragflow/.env` statt `elasticsearch` → disk-orientierte
+  Vektor-DB, deutlich weniger RAM als ES' JVM-Heap. **Der größte Hebel.** (Backend-Wechsel
+  = neu ingestieren — passt, du baust die KB ohnehin neu.)
+- Bleibst du bei ES: `MEM_LIMIT` deckeln (z. B. `6442450944` = 6 GB).
+- **Knowledge Graph (GraphRAG) und RAPTOR NICHT generieren** — die größten RAM-/Storage-/
+  Zeit-Fresser (LLM pro Chunk + Graph/Baum-Speicher). Nur bei echtem Bedarf einschalten.
+- Dataset-Tuning: **Auto-question = 0**, **Auto-keyword = 0**, **Auto-metadata aus**;
+  **Child-Chunks aus** halbiert den Index (kostet etwas Retrieval-Präzision); **Overlap 0**.
+- **Language = Deutsch** (nicht English) bei deutschen Dokumenten → bessere Tokenisierung/Qualität.
+- deepdoc bleibt **CPU** (`DEVICE=cpu`) → kein VRAM-Konflikt mit vLLM.
+- 4096-dim-Vektoren (8B-Embed) sind der schwerste Index-Teil; mit Infinity (Disk) ok,
+  sonst via MRL auf 2048 reduzieren.
+
 ---
 
 ## 12. [VERIFY] — vor Produktivbetrieb prüfen
