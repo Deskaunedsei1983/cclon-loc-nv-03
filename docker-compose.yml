@@ -255,7 +255,7 @@ services:
       --trust-remote-code
       --quantization fp8
       --max-model-len 4096
-      --gpu-memory-utilization 0.25
+      --gpu-memory-utilization ${EMBED_GPU_UTIL:-0.25}
     networks:
       - aistack-core
 
