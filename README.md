@@ -232,8 +232,10 @@ RAGFlow bringt **keine** Modelle mit — du verkabelst es mit deinem vLLM:
      *(`main` zeigt immer auf das aktive Hauptmodell — überlebt das Qwen⇄Gemma-Umschalten.)*
    - Embedding-Modell (**empfohlen**): den starken, multilingualen vLLM-Embedder
      eintragen — OpenAI-kompatibel, Base-URL **`http://host.docker.internal:8091/v1`**,
-     Modell **`qwen3-embed`**, Dimension **2560**. *(Das ist der `vllm-embed`-Dienst,
-     Qwen3-Embedding-4B; deutlich stärker als bge-m3.)*
+     Modell **`qwen3-embed`**, Dimension **4096**. *(Das ist der `vllm-embed`-Dienst,
+     Qwen3-Embedding-8B, MTEB-#1-Text; deutlich stärker als bge-m3.)*
+     **Wichtig:** Das Embedding-Modell ist **pro Knowledge-Base fix** — beim Wechsel
+     (andere Dimension!) eine **neue KB** anlegen und Dokumente neu parsen.
      Alternativen: RAGFlows eigenes TEI-Profil (`COMPOSE_PROFILES=...,tei-gpu` in
      `ragflow/.env`) oder das bge-m3-`embeddings` (`…:8082/v1`, versorgt sonst Mem0).
 3. **Dataset** anlegen, Dokumente hochladen, Parsing abwarten.
@@ -394,8 +396,8 @@ Drei Wege, das bei Bedarf nachzurüsten:
 | *— ODER —* vllm-main-gemma (Gemma 26B-A4B NVFP4, **256k**, util 0.35, max-num-seqs 2) | ~30–34 GB |
 | vllm-helper (4B, 32k, util 0.15) | ~10–12 GB |
 | embeddings (bge-m3, Mem0) | ~2–3 GB |
-| vllm-embed (Qwen3-Embedding-4B, FP8, util-Deckel 0.15, RAGFlow) | ~7–10 GB real |
-| **Summe / frei** | **~52–58 GB / ~38 GB frei** |
+| vllm-embed (Qwen3-Embedding-8B, FP8, util-Deckel 0.25, RAGFlow) | ~10–13 GB real |
+| **Summe / frei** | **~55–61 GB / ~35 GB frei** |
 
 > `--gpu-memory-utilization` ist nur eine **Obergrenze**, kein fixer Verbrauch — Embedding-
 > Modelle füllen sie (kein KV-Cache) nicht aus. Realen Wert mit `nvidia-smi` prüfen.
@@ -443,8 +445,8 @@ Konflikt; daher bleibt RAGFlow standardmäßig auf CPU.
 - **vllm-embed** (`vllm-embed`, Qwen3-Embedding-4B): Flag `--runner pooling` (aktuelles vLLM)
   vs. `--task embed` (älter) gegen dein Nightly prüfen; `/v1/embeddings` testen:
   `curl -s localhost:8091/v1/embeddings -H 'Content-Type: application/json' -d '{"model":"qwen3-embed","input":"hallo welt"}' | head -c 200`.
-  `--quantization fp8` notfalls weglassen oder vorquantisierten FP8/AWQ-Checkpoint nutzen.
-  In RAGFlow die **Dimension 2560** (4B) bzw. 4096 (8B) eintragen.
+  `--quantization fp8` notfalls weglassen (dann FP16, ~16 GB). In RAGFlow die
+  **Dimension 4096** (8B) eintragen; bei Wechsel auf 4B wäre es 2560.
 - **RAGFlow-Retrieval-API** (`/api/v1/retrieval`, Payload, API-Key-Format) gegen deine RAGFlow-Version
   — in `agent/common.py` markiert.
 - **PydanticAI/Mem0/LangGraph-Versionen** (in `requirements.txt` gepinnt; Kompat-Shim für `.output`/`.data` drin).

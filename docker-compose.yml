@@ -212,10 +212,10 @@ services:
 
   # ===================== 3b) EMBEDDINGS-LLM fuer RAGFlow (vLLM, Qwen3) =======
   #  Hochwertiges, MULTILINGUALES Embedding (100+ Sprachen) fuer RAGFlow-Retrieval
-  #  -> deutlich staerker als bge-m3 (MTEB-multilingual ~69.5). Versorgt RAGFlow
-  #  (NICHT Mem0 -> das bleibt auf bge-m3, sonst Qdrant-Re-Index noetig).
+  #  -> deutlich staerker als bge-m3 (Qwen3-Embedding-8B = MTEB-multilingual #1, ~70.6).
+  #  Versorgt RAGFlow (NICHT Mem0 -> das bleibt auf bge-m3, sonst Qdrant-Re-Index).
   #  RAGFlow verbindet sich per  http://host.docker.internal:8091/v1 , Modell
-  #  "qwen3-embed", Dimension 2560.
+  #  "qwen3-embed", Dimension 4096.
   vllm-embed:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}
     container_name: vllm_embed
@@ -237,16 +237,17 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # VRAM: --gpu-memory-utilization ist eine OBERGRENZE (~14 GB von 96), KEIN fixer
-    # Verbrauch. Embedding-Modelle haben KEINEN KV-Cache -> der reale Bedarf ist
-    # Gewichte + Aktivierung (real eher ~7-10 GB; mit nvidia-smi pruefen!).
-    # 0.15 noetig, weil online-FP8 erst die FP16-Gewichte laedt (~8 GB Lade-Peak)
-    # und DANN quantisiert. Noch sparsamer -> vorquantisierten FP8-Checkpoint nutzen.
-    # max-model-len 4096 reicht fuer RAG-Chunks dick aus (Modell kann bis 32k);
-    # hoeher = mehr Aktivierungsspeicher. 4B: 2560 Dim. Max. Qualitaet: Qwen3-Embedding-8B.
-    # [VERIFY] '--runner pooling' (aktuelles vLLM) bzw. '--task embed' (aelter).
+    # VRAM: --gpu-memory-utilization ist eine OBERGRENZE (von 96 GB), KEIN fixer
+    # Verbrauch. Embedding-Modelle haben KEINEN KV-Cache -> realer Bedarf =
+    # Gewichte + Aktivierung (8B-FP8 real ~10-13 GB; mit nvidia-smi pruefen!).
+    # 0.25 (~24 GB Deckel), weil online-FP8 erst die FP16-Gewichte laedt
+    # (~16 GB Lade-Peak bei 8B) und DANN quantisiert; danach laeuft es schlanker.
+    # 8B: 4096 Dim, MTEB-#1-Text, multilingual. max-model-len 4096 reicht fuer
+    # RAG-Chunks; MRL erlaubt kleinere Ausgabedimension. Schlanker: Qwen3-Embedding-4B (2560 Dim).
+    # [VERIFY] '--runner pooling' (aktuelles vLLM) bzw. '--task embed' (aelter);
+    #          --quantization fp8 notfalls weglassen (dann FP16, ~16 GB).
     command: >
-      Qwen/Qwen3-Embedding-4B
+      Qwen/Qwen3-Embedding-8B
       --served-model-name qwen3-embed
       --runner pooling
       --host 0.0.0.0
@@ -254,7 +255,7 @@ services:
       --trust-remote-code
       --quantization fp8
       --max-model-len 4096
-      --gpu-memory-utilization 0.15
+      --gpu-memory-utilization 0.25
     networks:
       - aistack-core
 
