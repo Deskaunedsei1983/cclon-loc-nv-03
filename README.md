@@ -357,9 +357,9 @@ Drei Wege, das bei Bedarf nachzurüsten:
 - [x] **Inferenz lokal** (vLLM) — keine Cloud-LLM-Calls.
 - [x] **Telemetrie aus**: OWUI, Qdrant, Mem0.
 - [x] **Websuche PII-maskiert** (Presidio, inkl. AT-VSNR-Recognizer) — OWUI **und** Agent.
-- [x] **Websuche-Egress über Tor** (SearXNG → `tor`-Dienst, rotierende Exit-IP):
-      robuster gegen Server-IP-CAPTCHAs **und** Netzwerk-Anonymität der Suchanfragen.
-      Engine-Liste bewusst auf Tor-verträgliche (Mojeek/Brave/Bing) reduziert.
+- [x] **Websuche-Engines kuratiert** (SearXNG: `mojeek`/`brave`/`bing`): zuverlässig aus
+      Server-IP, ohne Dauer-CAPTCHA/403-Rauschen. *(Tor wurde getestet und wieder
+      entfernt — Exit-IPs werden von den Engines soft-geblockt → leere Treffer.)*
 - [x] **Code-Sandbox luftdicht** (`aistack-sandbox`, internal) — kein Egress.
 - [x] **RAGFlow-Backend isoliert** im eigenen `ragflow`-Netz; nur der Server hängt am Brückennetz.
 - [x] **DBs auf NVMe** statt RAM (siehe §10).

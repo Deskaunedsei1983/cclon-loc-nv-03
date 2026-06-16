@@ -13,14 +13,12 @@
 use_default_settings:
   engines:
     keep_only:
-      # Bewusst OHNE duckduckgo/google/startpage/qwant -> das sind die CAPTCHA-/
-      # Block-Schleudern fuer Server-IPs (DDG CAPTCHA-t praktisch bei JEDER Anfrage).
-      # Diese hier scrapen aus einer Server-IP am vertraeglichsten:
-      - mojeek          # unabhaengiger Index, blockt fast nie -> Arbeitspferd
-      - brave           # eigener Index, meist ok
+      # Aus Server-IP zuverlaessig + ohne Dauerfehler. Bewusst OHNE google/ddg/
+      # startpage/qwant (CAPTCHA) und OHNE wikipedia/wikidata (403/502 = nur Rauschen,
+      # bringen fuer Web-Recherche wenig). Mojeek ist das Arbeitspferd; Brave/Bing Bonus.
+      - mojeek          # unabhaengiger Index, blockt fast nie -> primaer
+      - brave           # eigener Index, gute Treffer; 429t unter Burst (nicht-fatal)
       - bing            # breit, meist ok
-      - wikipedia       # API: Fakten/Entitaeten (403 ist meist transient, heilt selbst)
-      - wikidata        # API
 
 server:
   # secret_key wird per ENV (SEARXNG_SECRET) gesetzt
@@ -42,16 +40,8 @@ outgoing:
   pool_connections: 100
   pool_maxsize: 20
   enable_http2: true
-  # --- Hebel (2): Tor-Egress — DEAKTIVIERT (Test-Ergebnis) -------------------
-  # Test ergab: Tor laeuft ({"IsTor":true}), ABER die Engines liefern ueber
-  # Tor-Exit-IPs LEERE Ergebnisse (brave/wikipedia 429/403; mojeek/bing HTTP 200
-  # aber 0 Treffer = Soft-Block). Tor macht es hier also SCHLECHTER -> direkter
-  # Egress. Wieder einschalten (nur falls deine SERVER-IP der Flaschenhals ist):
-  # die 4 Zeilen unten einkommentieren + restart searxng (tor-Container laeuft eh).
-  # using_tor_proxy: true
-  # proxies:
-  #   all://:
-  #     - socks5h://tor:9050
+  # Hinweis: Tor-Egress wurde getestet und WIEDER ENTFERNT — die Engines liefern
+  # ueber Tor-Exit-IPs leere Ergebnisse (Soft-Block). Direkter Egress ist hier besser.
 
 # Keine externen Metriken/Telemetrie.
 general:

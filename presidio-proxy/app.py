@@ -102,9 +102,13 @@ async def search(request: Request):
     # JSON erzwingen, damit Agent/OWUI strukturiert parsen koennen:
     params.setdefault("format", "json")
 
+    # X-Forwarded-For setzen: SearXNGs Botdetection loggt sonst pro Suche einen
+    # Fehler ("X-Forwarded-For nor X-Real-IP header is set"). Wir sind der
+    # vertrauenswuerdige interne Proxy -> fester Platzhalter genuegt.
+    fwd_headers = {"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(f"{SEARXNG_URL}/search", params=params)
+            r = await client.get(f"{SEARXNG_URL}/search", params=params, headers=fwd_headers)
         ctype = r.headers.get("content-type", "")
         if "application/json" in ctype:
             return JSONResponse(content=r.json(), status_code=r.status_code)
