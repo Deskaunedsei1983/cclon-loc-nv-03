@@ -42,3 +42,12 @@ outgoing:
   pool_connections: 200
   pool_maxsize: 50
   enable_http2: true
+
+# DSGVO: keine externen Metriken/Telemetrie.
+general:
+  donation_url: false
+  enable_metrics: false
+
+ui:
+  static_use_hash: true
+
