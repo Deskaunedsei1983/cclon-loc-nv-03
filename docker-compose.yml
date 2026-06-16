@@ -25,14 +25,13 @@
 # ============================================================================
 
 services:
-
   # ===================== 1a) HAUPT-LLM A: QWEN  (NVFP4, SM120) ==============
   #  Umschaltbar gegen Gemma-Diffusion (1b) — es laeuft IMMER nur EINES davon.
   #  Auswahl in der .env:  COMPOSE_PROFILES=main-qwen   (Standard)
   #  Erreichbar bleibt es – wie gehabt – unter Hostname "vllm-main:5568",
   #  Modell-ID "main" (zusaetzlich weiter als "qwen-main").
   vllm-main:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}   # Tag via .env -> VLLM_IMAGE
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly} # Tag via .env -> VLLM_IMAGE
     container_name: vllm_main
     profiles: ["main-qwen"]
     restart: unless-stopped
@@ -85,7 +84,7 @@ services:
   #  Per Netzwerk-Alias unter demselben Hostnamen "vllm-main:5568" erreichbar,
   #  served-model-name "main" -> Agent/OWUI/RAGFlow brauchen KEINE Aenderung.
   vllm-main-gemma:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}   # Tag via .env -> VLLM_IMAGE (gepinnt, >= dev332, Diffusion + gemma4)
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly} # Tag via .env -> VLLM_IMAGE (gepinnt, >= dev332, Diffusion + gemma4)
     container_name: vllm_main_gemma
     profiles: ["main-gemma"]
     restart: unless-stopped
@@ -100,7 +99,7 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-      - VLLM_USE_V2_MODEL_RUNNER=1          # vom Modell verlangt
+      - VLLM_USE_V2_MODEL_RUNNER=1 # vom Modell verlangt
       # Attention-Backend als Env (auf diesem Image erprobt) == Model-Card "--attention-backend TRITON_ATTN":
       - VLLM_ATTENTION_BACKEND=TRITON_ATTN
       # SM120/Blackwell FP4-MoE-Kernel — nur falls das Diffusionsmodell ihn unterstuetzt:
@@ -143,7 +142,7 @@ services:
 
   # ===================== 2) HELFER-LLM (kleine Tasks) =======================
   vllm-helper:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}   # Tag via .env -> VLLM_IMAGE
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly} # Tag via .env -> VLLM_IMAGE
     container_name: vllm_helper
     restart: unless-stopped
     ipc: host
@@ -190,7 +189,7 @@ services:
   # Bewusst "embeddings" statt "tei" genannt, um Namenskollision mit RAGFlows
   # tei-Service zu vermeiden. Versorgt Mem0 (Agent-Gedaechtnis).
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest   # [VERIFY] SM120-Tag
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest # [VERIFY] SM120-Tag
     container_name: embeddings
     restart: unless-stopped
     ports:
@@ -330,7 +329,7 @@ services:
     pids_limit: 512
     # runtime: runsc          # gVisor fuer Hypervisor-Isolation (empfohlen)
     networks:
-      - aistack-sandbox        # NUR luftdicht -> kein Egress
+      - aistack-sandbox # NUR luftdicht -> kein Egress
 
   # ===================== 8) AGENT (PydanticAI ODER LangGraph) ===============
   agent:
@@ -340,12 +339,12 @@ services:
     container_name: agent
     restart: unless-stopped
     ports:
-      - "9009:9000"            # 9009 am Host (9000 ist von RAGFlows MinIO belegt)
+      - "9009:9000" # 9009 am Host (9000 ist von RAGFlows MinIO belegt)
     environment:
-      - AGENT_IMPL=${AGENT_IMPL:-langgraph}     # "pydantic" oder "langgraph"
+      - AGENT_IMPL=${AGENT_IMPL:-langgraph} # "pydantic" oder "langgraph"
       # LLM
       - LLM_BASE_URL=http://vllm-main:5568/v1
-      - LLM_MODEL=main          # stabil: zeigt immer auf das aktive Hauptmodell (Qwen ODER Gemma)
+      - LLM_MODEL=main # stabil: zeigt immer auf das aktive Hauptmodell (Qwen ODER Gemma)
       - LLM_API_KEY=not-needed
       # Embeddings (Mem0)
       - EMBED_BASE_URL=http://embeddings:80/v1
@@ -398,12 +397,12 @@ services:
       - ENABLE_WEB_SEARCH=true
       - WEB_SEARCH_ENGINE=searxng
       - SEARXNG_QUERY_URL=http://presidio-proxy:8080/search?q=<query>
-      - WEB_SEARCH_RESULT_COUNT=3          # weniger Folge-Fetches -> weniger Last/Trigger
-      - WEB_SEARCH_CONCURRENT_REQUESTS=1   # Burst minimieren -> Engines werden seltener CAPTCHA-gesperrt
+      - WEB_SEARCH_RESULT_COUNT=3 # weniger Folge-Fetches -> weniger Last/Trigger
+      - WEB_SEARCH_CONCURRENT_REQUESTS=1 # Burst minimieren -> Engines werden seltener CAPTCHA-gesperrt
       # KURZE Suchqueries aus dem Prompt bauen (statt 50-Wort-Prompt = Bot-Trigger).
       # vLLM ist OpenAI-kompatibel -> OWUI behandelt die Modelle als "external":
       - ENABLE_SEARCH_QUERY_GENERATION=true
-      - TASK_MODEL_EXTERNAL=qwen-helper    # leichter Helper baut Titel/Tags/Suchqueries (kein Reasoning-Leak)
+      - TASK_MODEL_EXTERNAL=qwen-helper # leichter Helper baut Titel/Tags/Suchqueries (kein Reasoning-Leak)
       - TASK_MODEL=qwen-helper
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
@@ -436,14 +435,14 @@ services:
   fragments:
     profiles: ["fragments"]
     build:
-      context: ./fragments        # Repo dorthin klonen, siehe ./fragments/README.md
+      context: ./fragments # Repo dorthin klonen, siehe ./fragments/README.md
     image: fragments:local
     container_name: fragments
     restart: unless-stopped
     ports:
       - "3010:3000"
     env_file:
-      - ./fragments/.env.local     # OPENAI_BASE_URL -> vLLM, E2B-Settings
+      - ./fragments/.env.local # OPENAI_BASE_URL -> vLLM, E2B-Settings
     networks:
       - aistack-core
 
@@ -470,18 +469,18 @@ services:
 
   open-computer-use:
     profiles: ["computer-use"]
-    image: ghcr.io/wide-moat/open-computer-use:latest   # [VERIFY] exaktes Image/Tag
+    image: ghcr.io/wide-moat/open-computer-use:latest # [VERIFY] exaktes Image/Tag
     container_name: open_computer_use
     restart: unless-stopped
     ports:
       - "8084:8084"
     environment:
       - DATABASE_URL=postgresql://ocu:${OCU_DB_PASSWORD:-bitte-aendern}@ocu-postgres:5432/ocu
-      - OPENAI_BASE_URL=http://vllm-main:5568/v1     # LLM des Sandbox-Agenten -> lokal
+      - OPENAI_BASE_URL=http://vllm-main:5568/v1 # LLM des Sandbox-Agenten -> lokal
       - OPENAI_API_KEY=not-needed
-      - MODEL=main                                   # stabil ueber Modell-Umschaltung
+      - MODEL=main # stabil ueber Modell-Umschaltung
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock     # Vertrauensgrenze! siehe README
+      - /var/run/docker.sock:/var/run/docker.sock # Vertrauensgrenze! siehe README
     networks:
       - aistack-core
     depends_on:
@@ -507,7 +506,7 @@ services:
     networks:
       aistack-core:
         aliases:
-          - postgres      # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
+          - postgres # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
 
   morphik-redis:
     profiles: ["morphik"]
@@ -517,11 +516,11 @@ services:
     networks:
       aistack-core:
         aliases:
-          - redis          # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
+          - redis # <--- DIESE BEIDEN ZEILEN HINZUFÜGEN
 
   morphik:
     profiles: ["morphik"]
-    image: ghcr.io/morphik-org/morphik-core:latest   # [VERIFY] exaktes Image/Tag
+    image: ghcr.io/morphik-org/morphik-core:latest # [VERIFY] exaktes Image/Tag
     container_name: morphik
     restart: unless-stopped
     ports:
@@ -557,7 +556,7 @@ networks:
   aistack-sandbox:
     name: aistack-sandbox
     driver: bridge
-    internal: true            # luftdicht: kein Egress
+    internal: true # luftdicht: kein Egress
   # Gemeinsames Netz mit dem RAGFlow-Sub-Bundle (einmalig erstellen):
   #   docker network create aistack-rag
   aistack-rag:

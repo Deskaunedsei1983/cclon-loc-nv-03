@@ -1,6 +1,6 @@
 """
-PII-Masking-Such-Proxy
-======================
+PII-Masking-Such-Proxy (Inklusive Burst-Bremse)
+==============================================
 Sitzt VOR SearXNG. Jede eingehende Suchanfrage wird mit Microsoft Presidio
 auf personenbezogene Daten gescannt (Namen, E-Mail, Telefon, IBAN, Kreditkarte,
 Standort, ...) und ZUSAETZLICH per Custom-Recognizer auf oesterreichische VSNR
@@ -8,21 +8,25 @@ Standort, ...) und ZUSAETZLICH per Custom-Recognizer auf oesterreichische VSNR
 Anfrage SearXNG / das Web erreicht. So koennen weder OWUI noch der Agent
 versehentlich PII ueber die Websuche nach draussen leaken.
 
+ERWEITERUNG:
+Ein globaler asynchroner Lock fängt parallele "Maschinengewehr"-Bursts von
+Open WebUI ab und verarbeitet Suchanfragen strikt nacheinander (sequentiell)
+mit einer zufälligen menschlichen Pause von 4 bis 7 Sekunden. Das verhindert
+effektiv CAPTCHAs und HTTP 429er Blocks bei globalen Suchmaschinen.
+
 Endpoint (kompatibel zu OWUI SEARXNG_QUERY_URL und zum Agent-Such-Tool):
     GET /search?q=<query>&format=json   ->  leitet maskiert an SearXNG weiter
-
-Hinweis: Presidio ist sehr gut, aber kein 100%-Garant. Fuer maximale Sicherheit
-zusaetzlich einen Allowlist-Ansatz fahren oder die Websuche ganz deaktivieren.
 """
 
-import os
+import asyncio
 import logging
+import os
+import random
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-
-from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
+from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
@@ -34,6 +38,10 @@ SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng:8080").rstrip("/")
 LANG = os.environ.get("PROXY_LANG", "de")
 
 app = FastAPI(title="PII-Masking Search Proxy")
+
+# --- Globale Bremse für Parallel-Anfragen (Throttling Queue) ----------------
+# Dieser Lock sorgt dafür, dass im async-Event-Loop IMMER nur eine Suche läuft.
+search_lock = asyncio.Lock()
 
 # --- Presidio Engines (einmalig laden) --------------------------------------
 # NLP-Engine fuer DE + EN konfigurieren (sonst kennt der Analyzer nur 'en').
@@ -79,7 +87,9 @@ def mask(text: str) -> str:
         results = analyzer.analyze(text=text, language=LANG)
         if not results:
             return text
-        masked = anonymizer.anonymize(text=text, analyzer_results=results, operators=OPERATORS)
+        masked = anonymizer.anonymize(
+            text=text, analyzer_results=results, operators=OPERATORS
+        )
         if masked.text != text:
             log.info("PII maskiert: %d Treffer", len(results))
         return masked.text
@@ -98,22 +108,48 @@ async def healthz():
 async def search(request: Request):
     params = dict(request.query_params)
     raw_q = params.get("q", "")
+
+    # 1. PII Maskierung durchführen
     params["q"] = mask(raw_q)
     # JSON erzwingen, damit Agent/OWUI strukturiert parsen koennen:
     params.setdefault("format", "json")
 
-    # X-Forwarded-For setzen: SearXNGs Botdetection loggt sonst pro Suche einen
-    # Fehler ("X-Forwarded-For nor X-Real-IP header is set"). Wir sind der
-    # vertrauenswuerdige interne Proxy -> fester Platzhalter genuegt.
+    # X-Forwarded-For setzen gegen SearXNG Bot-Warnungen
     fwd_headers = {"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(f"{SEARXNG_URL}/search", params=params, headers=fwd_headers)
-        ctype = r.headers.get("content-type", "")
-        if "application/json" in ctype:
-            return JSONResponse(content=r.json(), status_code=r.status_code)
-        return PlainTextResponse(content=r.text, status_code=r.status_code,
-                                 media_type=ctype or "text/plain")
-    except Exception as e:
-        log.exception("SearXNG-Weiterleitung fehlgeschlagen")
-        return JSONResponse(content={"error": str(e), "results": []}, status_code=502)
+
+    log.info("[Queue] Suchanfrage eingereiht: '%s'", params["q"])
+
+    # 2. Warteschlange und künstliche Verzögerung aktivieren
+    async with search_lock:
+        # Erzeuge eine variable Pause zwischen 4.0 und 7.0 Sekunden
+        cooldown = random.uniform(4.0, 7.0)
+        log.info(
+            "[Queue] Slot belegt. Erzwungene Atempause für %s Sekunden zur Bot-Vermeidung...",
+            f"{cooldown:.2f}",
+        )
+        await asyncio.sleep(cooldown)
+
+        # 3. Request an SearXNG absenden
+        try:
+            log.info("[Queue] Sende Anfrage an SearXNG: '%s'", params["q"])
+            async with httpx.AsyncClient(
+                timeout=25.0
+            ) as client:  # Timeout minimal erhöht, da Deep Research Zeit braucht
+                r = await client.get(
+                    f"{SEARXNG_URL}/search", params=params, headers=fwd_headers
+                )
+
+            ctype = r.headers.get("content-type", "")
+            if "application/json" in ctype:
+                return JSONResponse(content=r.json(), status_code=r.status_code)
+            return PlainTextResponse(
+                content=r.text,
+                status_code=r.status_code,
+                media_type=ctype or "text/plain",
+            )
+
+        except Exception as e:
+            log.exception("SearXNG-Weiterleitung fehlgeschlagen")
+            return JSONResponse(
+                content={"error": str(e), "results": []}, status_code=502
+            )
