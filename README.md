@@ -270,6 +270,10 @@ docker compose up -d code-sandbox agent open-webui
    *(Die Compose-ENV ist ein Vorschuss; maßgeblich ist die UI — Keys variieren je OWUI-Version. [VERIFY])*
 4. **Websuche:** *Admin → Settings → Web Search* → `searxng`,
    Query-URL `http://presidio-proxy:8080/search?q=<query>` → jede Suche wird PII-maskiert.
+   **PFLICHT (sonst „No sources found" TROTZ Treffern):** *Web Search* →
+   **„Bypass Web Loader" = AN** und *Documents* → **„Bypass Embedding and Retrieval" = AN**.
+   Diese sind `PersistentConfig` → **nur in der UI** wirksam, NICHT per ENV (Details:
+   `open-webui/README.md`). Ohne sie verwirft OWUIs RAG-Filter alle Web-Treffer.
 5. **System-Prompt für Office-Files** (Workspace → Models → `main`):
    > Wenn der Nutzer Word/Excel/PowerPoint/PDF oder ein Notebook will, SCHREIBE und
    > FÜHRE Python im Code-Interpreter AUS, erzeuge eine ECHTE Datei
