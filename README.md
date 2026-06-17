@@ -268,12 +268,17 @@ docker compose up -d code-sandbox agent open-webui
 3. **Code-Interpreter:** *Admin → Settings → Code Execution* → Engine **Jupyter**,
    URL `http://code-sandbox:8888`, Auth **token**, Token = dein `JUPYTER_TOKEN`.
    *(Die Compose-ENV ist ein Vorschuss; maßgeblich ist die UI — Keys variieren je OWUI-Version. [VERIFY])*
-4. **Websuche:** *Admin → Settings → Web Search* → `searxng`,
-   Query-URL `http://presidio-proxy:8080/search?q=<query>` → jede Suche wird PII-maskiert.
-   **PFLICHT (sonst „No sources found" TROTZ Treffern):** *Web Search* →
-   **„Bypass Web Loader" = AN** und *Documents* → **„Bypass Embedding and Retrieval" = AN**.
-   Diese sind `PersistentConfig` → **nur in der UI** wirksam, NICHT per ENV (Details:
-   `open-webui/README.md`). Ohne sie verwirft OWUIs RAG-Filter alle Web-Treffer.
+4. **Websuche** läuft **automatisch aus der Compose-ENV** — **kein UI-Toggle nötig**,
+   weil `ENABLE_PERSISTENT_CONFIG=False` gesetzt ist (OWUI liest die Settings aus der
+   ENV statt aus seiner DB). Die Kette:
+   - SearXNG hinter dem **PII-Maskier-Proxy** (`http://presidio-proxy:8080/search?q=<query>`),
+   - **volle Seiteninhalte** via **Playwright**-Headless-Browser (`WEB_LOADER_ENGINE=playwright`)
+     → Tabellen/Zahlen statt nur Snippets, gerendertes JS,
+   - RAG-Relevanzfilter umgangen (`BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true`),
+     damit die Treffer auch im Modell-Kontext landen.
+
+   Tuning (Tempo vs. Tiefe): `WEB_SEARCH_RESULT_COUNT`, `WEB_LOADER_CONCURRENT_REQUESTS`,
+   `PLAYWRIGHT_TIMEOUT`. Details: `open-webui/README.md`.
 5. **System-Prompt für Office-Files** (Workspace → Models → `main`):
    > Wenn der Nutzer Word/Excel/PowerPoint/PDF oder ein Notebook will, SCHREIBE und
    > FÜHRE Python im Code-Interpreter AUS, erzeuge eine ECHTE Datei

@@ -246,15 +246,15 @@ services:
     # [VERIFY] '--runner pooling' (aktuelles vLLM) bzw. '--task embed' (aelter);
     #          --quantization fp8 notfalls weglassen (dann FP16, ~16 GB).
     command: >
-      Qwen/Qwen3-Embedding-8B
+      ${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
       --served-model-name qwen3-embed
       --runner pooling
       --host 0.0.0.0
       --port 8091
       --trust-remote-code
       --quantization fp8
-      --max-model-len 4096
-      --gpu-memory-utilization ${EMBED_GPU_UTIL:-0.25}
+      --max-model-len ${EMBED_MAX_LEN:-4096}
+      --gpu-memory-utilization ${EMBED_GPU_UTIL:-0.30}
     networks:
       - aistack-core
 
@@ -377,6 +377,21 @@ services:
       - presidio-proxy
       - code-sandbox
 
+  # ===================== 8c) PLAYWRIGHT (Headless-Browser-Web-Loader) =======
+  #  OWUIs Web-Loader holt damit ECHTE, gerenderte Seiteninhalte (JS, Tabellen,
+  #  Zahlen) statt nur SearXNG-Snippets -> tiefe, automatische Web-Antworten.
+  #  Nur intern (aistack-core), kein Port nach aussen. Laedt oeffentliche Treffer-
+  #  URLs (keine PII -> Maskierung bleibt auf der Such-QUERY via presidio-proxy).
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.49.1-noble
+    container_name: playwright
+    restart: unless-stopped
+    command: npx -y playwright@1.49.1 run-server --port 3000 --host 0.0.0.0
+    expose:
+      - "3000"
+    networks:
+      - aistack-core
+
   # ===================== 9) OPEN WEBUI (Frontend) ===========================
   open-webui:
     image: ghcr.io/open-webui/open-webui:0.9.5
@@ -394,6 +409,12 @@ services:
       - ANONYMIZED_TELEMETRY=false
       - DO_NOT_TRACK=true
       - SCARF_NO_ANALYTICS=true
+      # Compose = EINZIGE Quelle der Wahrheit fuer diese Infra-Settings: OWUI liest
+      # sie aus der ENV statt aus der DB. Sonst sind viele Web-Settings "PersistentConfig"
+      # -> die ENV wird nach dem 1. Start ignoriert (man muesste alles in der UI klicken).
+      # Mit False wirkt jede Aenderung hier nach 'up -d' sofort, OHNE UI-Gefummel.
+      # (Modell-System-Prompt & Skills bleiben unberuehrt - nicht PersistentConfig.)
+      - ENABLE_PERSISTENT_CONFIG=False
       - ENABLE_WEB_SEARCH=true
       - WEB_SEARCH_ENGINE=searxng
       - SEARXNG_QUERY_URL=http://presidio-proxy:8080/search?q=<query>
@@ -404,11 +425,15 @@ services:
       - ENABLE_SEARCH_QUERY_GENERATION=true
       - TASK_MODEL_EXTERNAL=qwen-helper # leichter Helper baut Titel/Tags/Suchqueries (kein Reasoning-Leak)
       - TASK_MODEL=qwen-helper
-      # FIX "No sources found" TROTZ Treffern (bekanntes OWUI-Verhalten, #25038/#11016):
-      # OWUIs RAG-Pipeline umgehen -> SearXNG-Snippets DIREKT nutzen (kein langsames/
-      # blockiertes Seiten-Fetchen) UND ohne Embedding-Relevanzfilter, der sonst alle
-      # Web-Treffer verwirft. Loest gleichzeitig die Lahmheit durch die presidio-Pausen.
-      - BYPASS_WEB_SEARCH_WEB_LOADER=true
+      # VOLLE Seiteninhalte (Tabellen/Zahlen) statt nur Snippets: OWUI laedt die Treffer
+      # mit einem echten Headless-Browser (Playwright, rendert JS) -> tiefe Antworten
+      # AUTOMATISCH fuer JEDE Suche, kein User-Schalter ("claude.ai-Feeling").
+      - BYPASS_WEB_SEARCH_WEB_LOADER=false          # Loader AN = volle Seiten statt nur Snippets
+      - WEB_LOADER_ENGINE=playwright
+      - PLAYWRIGHT_WS_URI=ws://playwright:3000
+      - WEB_LOADER_CONCURRENT_REQUESTS=4            # Treffer-Seiten parallel laden (eigene Ziel-Sites, kein Engine-Limit)
+      # - PLAYWRIGHT_TIMEOUT=20000                  # ms/Seite tunen, falls Seiten haengen (Einheit s. OWUI #16801)
+      # RAG-Relevanzfilter weiter umgehen -> geladene Inhalte DIREKT in den Modell-Kontext:
       - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
@@ -429,6 +454,7 @@ services:
       - agent
       - code-sandbox
       - presidio-proxy
+      - playwright
 
   # ==========================================================================
   #  UPGRADE-PFAD A — E2B FRAGMENTS  (echte React-Artifacts wie claude.ai)

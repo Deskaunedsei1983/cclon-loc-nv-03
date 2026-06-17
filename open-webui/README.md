@@ -32,20 +32,29 @@ nichts verloren geht und wir Änderungen im Branch nachvollziehen/anpassen könn
 
 ---
 
-## ⚠️ Websuche „No sources found" trotz Treffern — PersistentConfig-Falle
+## Websuche — vollautomatisch, ohne UI-Gefummel
 
-Viele OWUI-Settings (u. a. die Web-Search-Bypässe) sind **`PersistentConfig`**: Die ENV in
-der `docker-compose.yml` wird **nur beim ALLERERSTEN Start** in OWUIs DB geschrieben.
-Lief OWUI schon, **gewinnt der DB-Wert** und die ENV wird ignoriert. Deshalb wirken
-`BYPASS_WEB_SEARCH_*` aus der Compose bei einer bestehenden Instanz **nicht** — man muss
-sie in der **Admin-UI** umlegen:
+Wir setzen **`ENABLE_PERSISTENT_CONFIG=False`** im `open-webui`-ENV → OWUI liest die
+Web-Settings **aus der Compose-ENV** statt aus seiner DB. (Sonst sind viele Web-Settings
+`PersistentConfig`: die ENV wird nur beim 1. Start übernommen, danach gewinnt die DB →
+man müsste alles in der Admin-UI klicken.) **Modell-System-Prompt & Skills bleiben
+unberührt** — die sind kein PersistentConfig.
 
-- **Admin → Settings → Documents → „Bypass Embedding and Retrieval" = AN**
-  (sonst verwirft OWUIs RAG-Filter die Web-Treffer → „No sources found").
-- **Admin → Settings → Web Search → „Bypass Web Loader" = AN**
-  (nutzt die SearXNG-Snippets direkt statt langsamem/blockiertem Seiten-Fetchen).
+So entsteht das „claude.ai-Feeling" — Suche liefert automatisch Tiefe, ohne Schalter:
+- `WEB_SEARCH_ENGINE=searxng` + `SEARXNG_QUERY_URL` → maskierte Suche (presidio).
+- `WEB_LOADER_ENGINE=playwright` + Dienst `playwright` → **volle, gerenderte Seiten**
+  (Tabellen/Zahlen), nicht nur Snippets. `BYPASS_WEB_SEARCH_WEB_LOADER=false`.
+- `BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true` → kein RAG-Relevanzfilter, der die
+  Treffer sonst verwirft („No sources found").
 
-Alternative „Compose = Quelle der Wahrheit": `ENABLE_PERSISTENT_CONFIG=False` im
-`open-webui`-ENV setzen → dann gelten die ENV-Werte wieder, **aber** UI-Änderungen an
-diesen Infra-Settings werden ignoriert (Prompt/Skills/Models bleiben unberührt).
+**Tuning** (Tempo ↔ Tiefe), alles in der `open-webui`-ENV:
+| ENV | Wirkung |
+|---|---|
+| `WEB_SEARCH_RESULT_COUNT` | Anzahl Treffer-Seiten (mehr = tiefer, langsamer) |
+| `WEB_LOADER_CONCURRENT_REQUESTS` | Seiten parallel laden |
+| `PLAYWRIGHT_TIMEOUT` | ms pro Seite (langsame Seiten nicht ewig blocken; Einheit s. [OWUI #16801](https://github.com/open-webui/open-webui/issues/16801)) |
+| `WEB_SEARCH_CONCURRENT_REQUESTS` | SearXNG-Queries parallel (niedrig lassen — presidio drosselt zusätzlich) |
+
+> OWUI bricht Tools nach ~100 s ab. presidio-Pausen (4–7 s × Queries) + Seiten-Laden
+> müssen darunter bleiben — sonst Pausen kürzen oder weniger Queries generieren lassen.
 
