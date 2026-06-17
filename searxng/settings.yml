@@ -5,15 +5,11 @@
 use_default_settings:
   engines:
     keep_only:
-      # Saubere, ladbare Engine-Namen (KEIN Unterstrich, kein fehleranfaelliger
-      # Custom-Block). Mit der presidio-Burst-Bremse sind brave/bing/ddg wieder ok;
-      # mojeek/qwant sind die unabhaengigen Arbeitspferde. google raus = Parser bricht
-      # an Googles Anti-Bot ("list index out of range").
+      # NUR die unabhaengigen, die aus deiner Server-IP NICHT raten/CAPTCHA-en.
+      # brave/bing/ddg/google rate-limiten (429/CAPTCHA) -> bewusst RAUS.
+      # Mit dem Playwright-Vollseiten-Loader reichen 2 gute Engines fuer Tiefe.
       - mojeek
       - qwant
-      - brave
-      - bing
-      - duckduckgo
 
 server:
   limiter: false

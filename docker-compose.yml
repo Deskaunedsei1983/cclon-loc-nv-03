@@ -425,6 +425,11 @@ services:
       - ENABLE_SEARCH_QUERY_GENERATION=true
       - TASK_MODEL_EXTERNAL=qwen-helper # leichter Helper baut Titel/Tags/Suchqueries (kein Reasoning-Leak)
       - TASK_MODEL=qwen-helper
+      # Folgefrage-Vorschlaege AUS: OWUI schickt dafuer die letzten 6 Nachrichten INKL.
+      # der riesigen Web-Seiteninhalte erneut ans Task-Modell (#15081) -> Mega-Prefill +
+      # staut das Hauptmodell; und die Vorschlaege lagen eh daneben (Torschuetzinnen/Tischtennis).
+      - ENABLE_FOLLOW_UP_GENERATION=false
+      - ENABLE_AUTOCOMPLETE_GENERATION=false
       # VOLLE Seiteninhalte (Tabellen/Zahlen) statt nur Snippets: OWUI laedt die Treffer
       # mit einem echten Headless-Browser (Playwright, rendert JS) -> tiefe Antworten
       # AUTOMATISCH fuer JEDE Suche, kein User-Schalter ("claude.ai-Feeling").
