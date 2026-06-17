@@ -5,10 +5,15 @@
 use_default_settings:
   engines:
     keep_only:
-      - google # Findet global alles, wird durch Proxy-Delay geschützt
-      - duckduckgo_lite # HTML-Lite Variante, extrem unempfindlich
-      - qwant # Starker europäischer/globaler Index
-      - mojeek # Unabhängiges Backup
+      # Saubere, ladbare Engine-Namen (KEIN Unterstrich, kein fehleranfaelliger
+      # Custom-Block). Mit der presidio-Burst-Bremse sind brave/bing/ddg wieder ok;
+      # mojeek/qwant sind die unabhaengigen Arbeitspferde. google raus = Parser bricht
+      # an Googles Anti-Bot ("list index out of range").
+      - mojeek
+      - qwant
+      - brave
+      - bing
+      - duckduckgo
 
 server:
   limiter: false
@@ -24,18 +29,6 @@ search:
     SearxEngineCaptcha: 10
     SearxEngineTooManyRequests: 5
     SearxEngineAccessDenied: 5
-
-engines:
-  - name: google
-    use_mobile_ui: true # Der Mobile-Trick bleibt aktiv (andere Bot-Filter)
-    weight: 1.5
-
-  - name: duckduckgo
-    remove: true
-
-  - name: duckduckgo_lite
-    engine: duckduckgo_lite
-    weight: 1.2
 
 outgoing:
   request_timeout: 12.0 # Höherer Timeout, da Deep-Research-Seiten manchmal brauchen
