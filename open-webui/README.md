@@ -9,7 +9,7 @@ nichts verloren geht und wir Änderungen im Branch nachvollziehen/anpassen könn
 | `system-prompt.md` | System-Prompt fürs Haupt-Modell (`main`/`gemma-main`) | Workspace → Models → `main` → *System Prompt* einfügen |
 | `skills/*.md` | Die 3 Skills (editierbare Einzeldateien) | Quelle zum Bearbeiten |
 | `skills/skills-export.json` | Dieselben 3 Skills, **re-importierbar** | Admin → Skills → *Import* |
-| `filters/gemma_reasoning_cleaner.py` | OWUI-Filter gegen den Gemma-`<\|channel>`-Leak | Admin → Functions → *Import/New* |
+| `filters/gemma_reasoning_cleaner.py` | OWUI-Filter gegen den Gemma-`<\|channel>`-Leak — **optional** (im Image `6607a80d`+ ist der Leak gefixt, nur Fallback für ältere) | Admin → Functions → *Import/New* |
 
 ## Workflow
 1. **Bearbeiten:** die `.md`/`.py` hier ändern.

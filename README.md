@@ -93,31 +93,31 @@ SM120/Blackwell, weit über `dev332`). Neuere Tags: [hub.docker.com/r/vllm/vllm-
 
 ---
 
-## 1b. Gemma-Reasoning: `<|channel>thought`-Leak bereinigen
+## 1b. Gemma-Reasoning: `<|channel>thought`-Leak (✅ gefixt im aktuellen Image)
 
-Taucht beim Gemma-Modell roher Denk-Text wie `<|channel>thought …` in der Antwort
-auf, ist das ein **bekannter vLLM-Bug** ([#38855](https://github.com/vllm-project/vllm/issues/38855)):
-der `gemma4`-Reasoning-Parser trennt `reasoning_content` nicht, weil
-`skip_special_tokens` die Kanal-Marker **vor** dem Parser entfernt. Deine Serve-Flags
-sind korrekt (entsprechen dem offiziellen Gemma4-Recipe) — der echte Fix muss upstream kommen.
+**Status: behoben.** Mit dem gepinnten Image `cu129-nightly-6607a80d…` (vLLM
+`0.23.1rc1.dev41`) ist der vLLM-Bug [#38855](https://github.com/vllm-project/vllm/issues/38855)
+**gefixt**: das Reasoning landet sauber im Feld `message.reasoning` (kein roher
+`<|channel>`-Text mehr im `content`) → OWUI rendert es als einklappbares „Thinking".
 
-**1) Diagnose — zeigt das ROHE Format (bitte Output sichern):**
+> **Wichtig bei Thinking-Modellen — genug `max_tokens`!** Das Reasoning verbraucht
+> Budget. Ist `max_tokens` zu niedrig (z. B. 400), geht **alles** ins Reasoning und
+> `content` bleibt **leer** (`finish_reason: length`). In OWUI großzügig setzen (≥ 2000).
+
+**Diagnose / Gegencheck:**
 ```bash
 curl -s http://localhost:5568/v1/chat/completions -H 'Content-Type: application/json' -d '{
   "model":"main",
   "messages":[{"role":"user","content":"Nenne 3 nachhaltige ETFs. Denk kurz nach."}],
-  "max_tokens":400
+  "max_tokens":2000
 }' | python3 -m json.tool
 ```
-Prüfen: hat `choices[0].message` ein Feld `reasoning`/`reasoning_content` (→ vLLM trennt
-korrekt, reines OWUI-Render-Thema) **oder** stecken die `<|channel>`-Marker in `content`
-(→ der Bug)?
+Erwartung: `choices[0].message.reasoning` befüllt **und** `content` mit der sauberen
+Antwort. Steckt `<|channel>` doch in `content`, ist das Image zu alt → `VLLM_IMAGE` neuer pinnen.
 
-**2) Sofort-Workaround (OWUI-Filter):** `open-webui/filters/gemma_reasoning_cleaner.py`
-importieren: *OWUI → Admin → Functions → „+" → Code einfügen → aktivieren*, dann dem
-Modell `main`/`gemma-main` (oder global) zuweisen. Er übersetzt
-`<|channel>thought … <channel|>` in natives `<think>…</think>` (einklappbares „Thinking")
-bzw. entfernt die Marker.
+**Fallback nur für ältere Images (OWUI-Filter):** `open-webui/filters/gemma_reasoning_cleaner.py`
+importieren (*OWUI → Admin → Functions → „+"*) und `main`/`gemma-main` zuweisen — übersetzt
+`<|channel>thought … <channel|>` in natives `<think>…</think>`. Beim aktuellen Image **nicht nötig**.
 
 **3) Saubere Notlösung ohne Thinking:** im Gemma-Serve-Command (docker-compose.yml)
 `--default-chat-template-kwargs '{"enable_thinking":false}'` → kein Denk-Kanal, kein Leak
