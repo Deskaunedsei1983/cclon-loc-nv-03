@@ -316,6 +316,17 @@ services:
       # Zentrales Logging: Proxy loggt auf DEBUG inkl. SearXNG-Treffer-ANZAHL pro
       # Suche (n=0 = Ursache fuer OWUIs "No results found"). Leiser: PRESIDIO_LOG_LEVEL=INFO
       - LOG_LEVEL=${PRESIDIO_LOG_LEVEL:-DEBUG}
+      # --- Such-Backend: searxng (Default, lokal) ODER externe Such-API ---------
+      # Falls die Server-IP von Engines soft-geblockt wird: auf brave/tavily/serper/
+      # google_pse umstellen (IP-unabhaengig). PII-Maskierung bleibt aktiv (erst
+      # maskieren -> dann API). Aktivieren via .env; Default-Fallbacks = aus/leer.
+      - SEARCH_BACKEND=${SEARCH_BACKEND:-searxng}
+      - SEARCH_RESULT_COUNT=${WEB_SEARCH_RESULT_COUNT:-10}
+      - BRAVE_API_KEY=${BRAVE_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - SERPER_API_KEY=${SERPER_API_KEY:-}
+      - GOOGLE_PSE_API_KEY=${GOOGLE_PSE_API_KEY:-}
+      - GOOGLE_PSE_ENGINE_ID=${GOOGLE_PSE_ENGINE_ID:-}
     networks:
       - aistack-core
     depends_on:

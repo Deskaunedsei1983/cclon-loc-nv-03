@@ -40,6 +40,19 @@ log = logging.getLogger("presidio-proxy")
 SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng:8080").rstrip("/")
 LANG = os.environ.get("PROXY_LANG", "de")
 
+# --- Such-Backend (Default: SearXNG; optional externe Such-APIs) -------------
+# Wird die Server-IP von Engines "soft-geblockt" (HTTP 200 + 0 Treffer), liefern
+# offizielle Such-APIs IP-UNABHAENGIG Ergebnisse. Die PII-MASKIERUNG bleibt voll
+# erhalten: es wird IMMER zuerst maskiert und DANN erst an die API geschickt.
+#   SEARCH_BACKEND = searxng (Default) | brave | tavily | serper | google_pse
+SEARCH_BACKEND = os.environ.get("SEARCH_BACKEND", "searxng").strip().lower()
+SEARCH_RESULT_COUNT = int(os.environ.get("SEARCH_RESULT_COUNT", "10") or "10")
+BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY", "")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
+GOOGLE_PSE_API_KEY = os.environ.get("GOOGLE_PSE_API_KEY", "")
+GOOGLE_PSE_ENGINE_ID = os.environ.get("GOOGLE_PSE_ENGINE_ID", "")
+
 app = FastAPI(title="PII-Masking Search Proxy")
 
 # --- Globale Bremse für Parallel-Anfragen (Throttling Queue) ----------------
@@ -102,9 +115,66 @@ def mask(text: str) -> str:
         return "<BLOCKED>"
 
 
+async def _api_search(q: str) -> list[dict]:
+    """Offizielle Such-API abfragen und auf die SearXNG-JSON-Form normalisieren
+    ([{"url","title","content"}]). 'q' ist bereits PII-maskiert. So bekommt OWUI
+    exakt dieselbe Struktur wie von SearXNG -> kein OWUI-Umbau noetig."""
+    n = SEARCH_RESULT_COUNT
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        if SEARCH_BACKEND == "tavily":
+            if not TAVILY_API_KEY:
+                raise RuntimeError("SEARCH_BACKEND=tavily, aber TAVILY_API_KEY fehlt")
+            r = await client.post("https://api.tavily.com/search", json={
+                "api_key": TAVILY_API_KEY, "query": q,
+                "max_results": n, "search_depth": "basic"})
+            r.raise_for_status()
+            return [{"url": x.get("url"), "title": x.get("title"),
+                     "content": x.get("content", "")}
+                    for x in r.json().get("results", []) if x.get("url")]
+        if SEARCH_BACKEND == "brave":
+            if not BRAVE_API_KEY:
+                raise RuntimeError("SEARCH_BACKEND=brave, aber BRAVE_API_KEY fehlt")
+            r = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": q, "count": n},
+                headers={"X-Subscription-Token": BRAVE_API_KEY,
+                         "Accept": "application/json"})
+            r.raise_for_status()
+            web = r.json().get("web") or {}
+            return [{"url": x.get("url"), "title": x.get("title"),
+                     "content": x.get("description", "")}
+                    for x in web.get("results", []) if x.get("url")]
+        if SEARCH_BACKEND == "serper":
+            if not SERPER_API_KEY:
+                raise RuntimeError("SEARCH_BACKEND=serper, aber SERPER_API_KEY fehlt")
+            r = await client.post(
+                "https://google.serper.dev/search",
+                headers={"X-API-KEY": SERPER_API_KEY,
+                         "Content-Type": "application/json"},
+                json={"q": q, "num": n})
+            r.raise_for_status()
+            return [{"url": x.get("link"), "title": x.get("title"),
+                     "content": x.get("snippet", "")}
+                    for x in r.json().get("organic", []) if x.get("link")]
+        if SEARCH_BACKEND == "google_pse":
+            if not (GOOGLE_PSE_API_KEY and GOOGLE_PSE_ENGINE_ID):
+                raise RuntimeError("SEARCH_BACKEND=google_pse, aber GOOGLE_PSE_API_KEY/"
+                                   "GOOGLE_PSE_ENGINE_ID fehlt")
+            r = await client.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params={"key": GOOGLE_PSE_API_KEY, "cx": GOOGLE_PSE_ENGINE_ID,
+                        "q": q, "num": min(n, 10)})
+            r.raise_for_status()
+            return [{"url": x.get("link"), "title": x.get("title"),
+                     "content": x.get("snippet", "")}
+                    for x in r.json().get("items", []) if x.get("link")]
+        raise RuntimeError(f"Unbekanntes SEARCH_BACKEND: '{SEARCH_BACKEND}' "
+                           "(erlaubt: searxng|brave|tavily|serper|google_pse)")
+
+
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True}
+    return {"ok": True, "backend": SEARCH_BACKEND}
 
 
 @app.get("/search")
@@ -112,15 +182,37 @@ async def search(request: Request):
     params = dict(request.query_params)
     raw_q = params.get("q", "")
 
-    # 1. PII Maskierung durchführen
+    # 1. PII-Maskierung IMMER zuerst (gilt fuer SearXNG UND API-Backends).
     params["q"] = mask(raw_q)
     # JSON erzwingen, damit Agent/OWUI strukturiert parsen koennen:
     params.setdefault("format", "json")
+    masked_q = params["q"]
 
-    # X-Forwarded-For setzen gegen SearXNG Bot-Warnungen
+    # 2a. API-Backend (Brave/Tavily/Serper/Google-PSE): IP-unabhaengige offizielle
+    #     Such-API. KEINE Burst-Bremse noetig (eigene Rate-Limits). Schon maskiert.
+    if SEARCH_BACKEND != "searxng":
+        try:
+            results = await _api_search(masked_q)
+            log.info("[API:%s] %d Treffer fuer '%s'", SEARCH_BACKEND, len(results), masked_q)
+            if not results:
+                log.warning("[API:%s] 0 Treffer -> API-Key/Kontingent/Query pruefen.", SEARCH_BACKEND)
+            return JSONResponse({"results": results,
+                                 "number_of_results": len(results),
+                                 "query": masked_q})
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code if e.response is not None else "?"
+            body = e.response.text[:300] if e.response is not None else ""
+            log.error("[API:%s] HTTP %s: %s", SEARCH_BACKEND, code, body)
+            return JSONResponse({"error": f"{SEARCH_BACKEND}: HTTP {code}", "results": []},
+                                status_code=502)
+        except Exception as e:
+            log.exception("[API:%s] Suche fehlgeschlagen", SEARCH_BACKEND)
+            return JSONResponse({"error": str(e), "results": []}, status_code=502)
+
+    # 2b. SearXNG-Backend (Default): X-Forwarded-For gegen Bot-Warnungen + Bremse.
     fwd_headers = {"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
 
-    log.info("[Queue] Suchanfrage eingereiht: '%s'", params["q"])
+    log.info("[Queue] Suchanfrage eingereiht: '%s'", masked_q)
 
     # 2. Warteschlange und künstliche Verzögerung aktivieren
     async with search_lock:

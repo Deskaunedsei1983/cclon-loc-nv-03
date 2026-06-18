@@ -16,7 +16,19 @@ cd "$(dirname "$0")"
 
 echo ">> 1/3  settings.yml -> runtime/ spiegeln"
 mkdir -p searxng/runtime
-cp -f searxng/settings.yml searxng/runtime/settings.yml
+# Die runtime-Datei gehoert nach Container-Start dem SearXNG-User (UID 977) und
+# liegt in einem evtl. root/977-eigenen Verzeichnis -> 'cp -f' scheitert dann an
+# den Rechten (genau der Bug, der die alte Config "kleben" liess). Einmalig das
+# Verzeichnis zurueckholen, danach klappt das Spiegeln dauerhaft ohne sudo.
+if ! cp -f searxng/settings.yml searxng/runtime/settings.yml 2>/dev/null; then
+  echo "   runtime/ gehoert dem Container -> einmalig mit sudo zurueckholen ..."
+  sudo chown -R "$(id -u):$(id -g)" searxng/runtime
+  cp -f searxng/settings.yml searxng/runtime/settings.yml
+fi
+# HARTE Verifikation, dass der Spiegel wirklich die neuen Engines enthaelt
+# (sonst wieder stiller Fehlschlag wie zuvor):
+echo "   gespiegelter Engine-Satz in runtime/:"
+grep -E "^[[:space:]]+- [a-z]+" searxng/runtime/settings.yml | sed 's/^/     /'
 
 echo ">> 2/3  searxng neu erstellen (liest die frische Config)"
 docker compose -f docker-compose.yml up -d --force-recreate --no-deps searxng

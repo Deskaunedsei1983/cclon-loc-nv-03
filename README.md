@@ -312,6 +312,19 @@ Logging ganz aus: `LOGGING_STACK=0 ./start.sh`.
    **Fallback** bei Loader-Fehlern („An error occurred"/„No results"): `BYPASS_WEB_SEARCH_WEB_LOADER=true`
    (nur Snippets, robust, aber flacher). *(Das mcr-Playwright-`run-server` zerbrach an OWUI 0.9.5
    per Versions-Mismatch — browserless ist CDP-/versions-tolerant.)*
+
+   **„0 Treffer trotz funktionierender Pipeline"?** Dann blockt die **Server-IP**
+   die freien Engines „soft" (SearXNG = HTTP 200 + 0 Treffer, kein 429). Statt am
+   Engine-Satz zu drehen, auf eine **offizielle Such-API** umschalten — der
+   Presidio-Proxy spricht sie direkt an und **maskiert weiterhin zuerst** (kein
+   PII-Leak), OWUI bekommt dasselbe JSON. In der `.env`:
+   ```bash
+   SEARCH_BACKEND=brave      # oder: tavily | serper | google_pse
+   BRAVE_API_KEY=dein-key    # je nach Backend der passende Key (siehe .env-example)
+   docker compose up -d --force-recreate presidio-proxy
+   ```
+   So bleibt SearXNG der kostenlose Default, die API ist der IP-unabhaengige
+   Notnagel — umschaltbar per ENV, ohne Code-Aenderung.
 5. **System-Prompt für Office-Files** (Workspace → Models → `main`):
    > Wenn der Nutzer Word/Excel/PowerPoint/PDF oder ein Notebook will, SCHREIBE und
    > FÜHRE Python im Code-Interpreter AUS, erzeuge eine ECHTE Datei
