@@ -43,9 +43,32 @@ echo "----- aktiver Engine-Satz IM Container -----"
 docker exec searxng grep -nE "keep_only|^\s+- [a-z]+" /etc/searxng/settings.yml 2>/dev/null | head -20 || true
 
 echo "----- Live-Test ueber den Proxy-Pfad (results sollte > 0 sein) -----"
-docker exec presidio_proxy python -c "import httpx;from collections import Counter;r=httpx.get('http://searxng:8080/search',params={'q':'wetter berlin','format':'json'},timeout=30);d=r.json();print('HTTP',r.status_code,'| results',len(d.get('results',[])));print('unresponsive_engines:',d.get('unresponsive_engines'));print('treffer-pro-engine:',dict(Counter(x.get('engine') for x in d.get('results',[]))))" 2>/dev/null \
-  || echo "   (Proxy/SearXNG noch nicht bereit — in ~10s manuell nachtesten)"
-
-echo
-echo "Fertig. Bleibt results=0 trotz breitem Satz -> es ist deine SERVER-IP"
-echo "(broad soft-block): dann hilft nur ein anderer Egress (Residential-Proxy)."
+# Exit-Code des Probes treibt das Fazit: 0 = Treffer, 1 = leer, 2 = nicht erreichbar.
+if docker exec presidio_proxy python -c "
+import sys, httpx
+from collections import Counter
+try:
+    r = httpx.get('http://searxng:8080/search',
+                  params={'q': 'wetter berlin', 'format': 'json'}, timeout=30)
+    d = r.json(); res = d.get('results', [])
+except Exception as e:
+    print('Probe nicht erreichbar:', e); sys.exit(2)
+print('HTTP', r.status_code, '| results', len(res))
+print('unresponsive_engines:', d.get('unresponsive_engines'))
+print('treffer-pro-engine:', dict(Counter(x.get('engine') for x in res)))
+sys.exit(0 if res else 1)
+"; then
+  echo
+  echo "OK: Websuche liefert Treffer -> jetzt in OWUI testen. Dass einzelne Engines"
+  echo "    429/Fehler werfen (unresponsive_engines) ist normal -> die Redundanz traegt."
+else
+  rc=$?
+  echo
+  if [ "$rc" = "2" ]; then
+    echo "Test-Request scheiterte (Proxy/SearXNG noch nicht bereit?) -> in ~10s manuell nachtesten."
+  else
+    echo "results=0 TROTZ breitem Satz -> erst JETZT ist die SERVER-IP der Verdacht"
+    echo "(broad soft-block). Loesung: in .env  SEARCH_BACKEND=brave|tavily|serper|google_pse"
+    echo "+ Key, dann  docker compose up -d --force-recreate presidio-proxy  (siehe .env-example)."
+  fi
+fi
