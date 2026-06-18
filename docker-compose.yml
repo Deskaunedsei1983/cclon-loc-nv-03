@@ -198,6 +198,8 @@ services:
       - embeddings-data:/data
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
+      # TEI-Log-Level (Rust). Default info; hochdrehen: TEI_LOG_LEVEL=debug in .env.
+      - RUST_LOG=${TEI_LOG_LEVEL:-info}
     command: --model-id BAAI/bge-m3 --dtype float16
     deploy:
       resources:
@@ -270,6 +272,8 @@ services:
     environment:
       - QDRANT__STORAGE__ON_DISK_PAYLOAD=true
       - QDRANT__TELEMETRY_DISABLED=true
+      # Log-Level (Default INFO; DEBUG ist sehr laut -> nur bei Qdrant-Problemen).
+      - QDRANT__LOG_LEVEL=${QDRANT_LOG_LEVEL:-INFO}
     networks:
       - aistack-core
 
@@ -290,6 +294,10 @@ services:
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET:-bitte-zufalls-string-setzen}
       - SEARXNG_BASE_URL=http://searxng:8080/
+      # Debug-Logging: protokolliert PRO ENGINE, ob/mit wie vielen Treffern bzw.
+      # mit welchem Fehler (429/CAPTCHA/Timeout) sie antwortet -> direkt in Loki.
+      # Leiser: SEARXNG_DEBUG=false in der .env.
+      - SEARXNG_DEBUG=${SEARXNG_DEBUG:-true}
     networks:
       - aistack-core
 
@@ -305,6 +313,9 @@ services:
     environment:
       - SEARXNG_URL=http://searxng:8080
       - PROXY_LANG=de
+      # Zentrales Logging: Proxy loggt auf DEBUG inkl. SearXNG-Treffer-ANZAHL pro
+      # Suche (n=0 = Ursache fuer OWUIs "No results found"). Leiser: PRESIDIO_LOG_LEVEL=INFO
+      - LOG_LEVEL=${PRESIDIO_LOG_LEVEL:-DEBUG}
     networks:
       - aistack-core
     depends_on:
@@ -342,6 +353,8 @@ services:
       - "9009:9000" # 9009 am Host (9000 ist von RAGFlows MinIO belegt)
     environment:
       - AGENT_IMPL=${AGENT_IMPL:-langgraph} # "pydantic" oder "langgraph"
+      # Zentrales Logging: Agent-Module auf DEBUG (Default INFO). Leiser: AGENT_LOG_LEVEL=INFO
+      - LOG_LEVEL=${AGENT_LOG_LEVEL:-DEBUG}
       # LLM
       - LLM_BASE_URL=http://vllm-main:5568/v1
       - LLM_MODEL=main # stabil: zeigt immer auf das aktive Hauptmodell (Qwen ODER Gemma)
@@ -415,6 +428,11 @@ services:
       - ANONYMIZED_TELEMETRY=false
       - DO_NOT_TRACK=true
       - SCARF_NO_ANALYTICS=true
+      # --- Zentrales Logging (siehe docker-compose.observability.yml) ----------
+      # Ganze OWUI-Pipeline inkl. Websuche/RAG auf DEBUG -> in Grafana/Loki wird
+      # sichtbar, WARUM eine Suche 0 Treffer hat (Query-Bau -> Proxy -> Loader).
+      # Leiser stellen: OWUI_LOG_LEVEL=INFO in der .env.
+      - GLOBAL_LOG_LEVEL=${OWUI_LOG_LEVEL:-DEBUG}
       # Compose = EINZIGE Quelle der Wahrheit fuer diese Infra-Settings: OWUI liest
       # sie aus der ENV statt aus der DB. Sonst sind viele Web-Settings "PersistentConfig"
       # -> die ENV wird nach dem 1. Start ignoriert (man muesste alles in der UI klicken).

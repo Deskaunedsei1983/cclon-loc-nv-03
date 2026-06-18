@@ -15,8 +15,8 @@ echo "Log: $LOG"
 EXTRA=()
 [ "${1:-}" = "--volumes" ] && EXTRA+=(-v)
 
-echo ">> Kernstack + Upgrades stoppen"
-docker compose -f docker-compose.yml -f docker-compose.upgrades.yml \
+echo ">> Kernstack + Upgrades + Observability stoppen"
+docker compose -f docker-compose.yml -f docker-compose.upgrades.yml -f docker-compose.observability.yml \
   --profile main-qwen --profile main-gemma \
   --profile microvm --profile computer-use --profile morphik down "${EXTRA[@]}" 2>&1 || true
 

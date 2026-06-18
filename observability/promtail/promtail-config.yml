@@ -1,0 +1,48 @@
+# ============================================================================
+#  Promtail — Log-Sammler
+#  ---------------------------------------------------------------------------
+#  Entdeckt ALLE laufenden Container ueber den Docker-Socket (read-only) und
+#  schickt deren stdout/stderr an Loki. KEINE Per-Container-Konfiguration noetig
+#  -> neue Container (auch RAGFlow, vLLM, Upgrades) werden automatisch erfasst.
+#
+#  Labels pro Zeile:
+#    container  = Container-Name (z.B. open-webui, searxng, vllm_main)
+#    service    = compose-Service  (z.B. open-webui)
+#    project    = compose-Projekt  (cclon-... bzw. ragflow)
+#    stream     = stdout | stderr
+#    level      = erkanntes Log-Level (DEBUG/INFO/WARN/ERROR/...), falls vorhanden
+# ============================================================================
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Container-Name (Docker stellt ihn als "/name" bereit -> fuehrenden / weg)
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'project'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+    pipeline_stages:
+      # Log-Level heuristisch aus der Zeile ziehen (erste Treffer-Variante gewinnt).
+      # Reicht fuer Triage; nicht jede Zeile hat ein Level -> dann kein level-Label.
+      - regex:
+          expression: '(?i)\b(?P<level>trace|debug|info|notice|warning|warn|error|err|critical|crit|fatal)\b'
+      - labels:
+          level:

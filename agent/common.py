@@ -24,7 +24,9 @@ os.environ.setdefault("MEM0_TELEMETRY", "False")
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 os.environ.setdefault("OPENAI_API_KEY", os.environ.get("LLM_API_KEY", "not-needed"))
 
-logging.basicConfig(level=logging.INFO)
+# Log-Level per ENV (Default INFO; im Stack via AGENT_LOG_LEVEL/LOG_LEVEL auf DEBUG).
+_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, _LEVEL, logging.INFO))
 log = logging.getLogger("agent.common")
 
 # --- Konfiguration ----------------------------------------------------------

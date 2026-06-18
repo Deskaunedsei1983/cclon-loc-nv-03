@@ -31,7 +31,10 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
-logging.basicConfig(level=logging.INFO)
+# Log-Level per ENV steuerbar (Default INFO). Im Stack auf DEBUG gesetzt
+# (PRESIDIO_LOG_LEVEL in der .env / docker-compose) -> volle Websuche-Diagnostik.
+_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, _LEVEL, logging.INFO))
 log = logging.getLogger("presidio-proxy")
 
 SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng:8080").rstrip("/")
@@ -141,7 +144,36 @@ async def search(request: Request):
 
             ctype = r.headers.get("content-type", "")
             if "application/json" in ctype:
-                return JSONResponse(content=r.json(), status_code=r.status_code)
+                data = r.json()
+                # WICHTIG fuer das Websuche-Debugging: zeigt schwarz auf weiss, ob
+                # SearXNG ueberhaupt Treffer liefert. n=0 ist die haeufigste Ursache
+                # fuer OWUIs "404: No results found from web search" (Engines leer/
+                # rate-limitiert) -> in Grafana/Loki sofort sichtbar, WO es klemmt.
+                n = len(data.get("results", [])) if isinstance(data, dict) else 0
+                log.info(
+                    "[Queue] SearXNG-Antwort: HTTP %s, %d Treffer fuer '%s'",
+                    r.status_code, n, params["q"],
+                )
+                if n == 0 and isinstance(data, dict):
+                    # Engine-Diagnostik aus der SearXNG-JSON, falls vorhanden:
+                    unresp = data.get("unresponsive_engines") or []
+                    if unresp:
+                        log.warning(
+                            "[Queue] SearXNG: 0 Treffer + ausgefallene Engines: %s",
+                            unresp,
+                        )
+                    else:
+                        log.warning(
+                            "[Queue] SearXNG: 0 Treffer (Engines ohne Fehler -> "
+                            "Query evtl. zu spezifisch/maskiert oder Engines leer).",
+                        )
+                return JSONResponse(content=data, status_code=r.status_code)
+            # Kein JSON -> meist HTML (CAPTCHA/Block-Seite). Auch das ist Diagnostik.
+            log.warning(
+                "[Queue] SearXNG-Antwort NICHT JSON (content-type=%s, HTTP %s) -> "
+                "evtl. CAPTCHA/Block-Seite statt Ergebnissen.",
+                ctype or "(leer)", r.status_code,
+            )
             return PlainTextResponse(
                 content=r.text,
                 status_code=r.status_code,

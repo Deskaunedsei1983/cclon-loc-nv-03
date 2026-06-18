@@ -1,0 +1,14 @@
+# Dashboards aus /var/lib/grafana/dashboards automatisch laden (kein Import noetig).
+apiVersion: 1
+
+providers:
+  - name: aistack
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

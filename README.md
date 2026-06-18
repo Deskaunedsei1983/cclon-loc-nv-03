@@ -179,9 +179,12 @@ curl -sSL https://get.microsandbox.dev | sh      # Microsandbox-Runtime (libkrun
 local-ai-stack/
 ├── docker-compose.yml          # KERNSTACK (sauber, ohne Upgrade-Pfade)
 ├── docker-compose.upgrades.yml # alle Upgrade-Pfade (Overlay, nur auf Wunsch)
+├── docker-compose.observability.yml # zentrales Logging (Loki+Grafana+Dozzle+Promtail)
 ├── .env.example                # → cp .env.example .env
 ├── start.sh  stop.sh           # Orchestrierung (Netz → RAGFlow → Stack [+Overlay])
 ├── README.md
+├── observability/              # Logging-Stack: Configs + fertiges Grafana-Dashboard
+│   ├── loki/  promtail/  grafana/   README.md
 ├── ragflow/                    # EIGENES RAGFlow (Original-Upstream eingebettet)
 │   ├── docker-compose.yml  docker-compose-base.yml  docker-compose.override.yml
 │   ├── .env  service_conf.yaml.template  entrypoint.sh  init.sql
@@ -257,6 +260,33 @@ curl -s http://localhost:5568/v1/models | python -m json.tool
 docker compose up -d vllm-helper embeddings qdrant searxng presidio-proxy
 docker compose up -d code-sandbox agent open-webui
 ```
+
+---
+
+## 5b. Zentrales Logging / Debugging — „wo muss ich schauen?"
+
+Damit nie wieder unklar ist, **in welchem Container** das Problem steckt (z. B.
+Websuche liefert nichts), laufen die Logs **aller** Container an einer Stelle
+zusammen. Der Stack startet **automatisch mit** (`./start.sh`), Details:
+[`observability/README.md`](observability/README.md).
+
+| Dienst | Zweck | Zugriff |
+|--------|-------|---------|
+| **Grafana** | durchsuchbare, **persistente** Logs (14 Tage) + fertiges Dashboard | http://localhost:3011 |
+| **Dozzle**  | **Live**-Viewer aller Container in Echtzeit | http://localhost:8085 |
+| Loki / Promtail | Speicher bzw. Sammler (via Docker-Socket, alle Container) | intern |
+
+**Triage in 10 Sekunden:** Grafana → Dashboard **„AI-Stack — Container-Logs &
+Fehler"**:
+- Panel **„Fehler / Warnungen pro Container"** → zeigt sofort den schuldigen Dienst.
+- Panel **„Websuche-Pfad"** → bündelt `open-webui` · `presidio_proxy` · `searxng`.
+  Der Proxy loggt jetzt die **SearXNG-Treffer-Anzahl** — `n=0` ⇒ Engines
+  leer/rate-limitiert ⇒ genau das ist OWUIs „404: No results found from web search".
+
+**Log-Level:** Such-/RAG-/Agent-Pfad steht per Default auf **DEBUG**
+(`OWUI_LOG_LEVEL`, `PRESIDIO_LOG_LEVEL`, `SEARXNG_DEBUG`, `AGENT_LOG_LEVEL` in der
+`.env`). **vLLM-Dienste bleiben bewusst unangetastet** (loggen ohnehin viel).
+Logging ganz aus: `LOGGING_STACK=0 ./start.sh`.
 
 ---
 

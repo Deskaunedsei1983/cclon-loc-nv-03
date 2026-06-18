@@ -1,0 +1,112 @@
+# ============================================================================
+#  ZENTRALES LOGGING / OBSERVABILITY  (Overlay — separat vom Kernstack)
+#  ---------------------------------------------------------------------------
+#  Eine Sammelstelle fuer die Logs ALLER Container, damit nie wieder unklar ist,
+#  "in welchem Container man schauen muss". Vier schlanke Dienste:
+#
+#    promtail  -> liest via Docker-Socket (ro) die Logs JEDES laufenden
+#                 Containers (Kernstack + RAGFlow + vLLM + Upgrades) und schickt
+#                 sie an Loki. Keine Per-Container-Konfig noetig.
+#    loki      -> speichert alles durchsuchbar auf Platte (14 Tage), DSGVO-konform.
+#    grafana   -> EINE Web-UI: Volltext-/Level-/Zeit-Suche ueber den ganzen Stack,
+#                 inkl. fertigem Dashboard "AI-Stack — Container-Logs & Fehler"
+#                 (Fehler/Warnungen-Uebersicht + dedizierter Websuche-Pfad-Panel).
+#    dozzle    -> ultraleichter LIVE-Viewer aller Container-Logs (Triage in
+#                 Echtzeit: "welcher Container schreit gerade?").
+#
+#  Start (Standard ueber start.sh, immer an):
+#     docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#  Nur das Logging allein:
+#     docker compose -f docker-compose.observability.yml up -d
+#  Aus:  LOGGING_STACK=0 ./start.sh
+#
+#  Zugriffe:  Grafana http://localhost:${GRAFANA_PORT:-3011}
+#             Dozzle  http://localhost:${DOZZLE_PORT:-8085}
+# ============================================================================
+
+services:
+  # ---------- Log-Speicher ----------
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    expose:
+      - "3100"
+    networks:
+      - aistack-observability
+
+  # ---------- Log-Sammler (Docker-Socket -> Loki) ----------
+  promtail:
+    image: grafana/promtail:3.3.0
+    container_name: promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      # Read-only Docker-Socket -> Promtail entdeckt & liest die Logs aller Container.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp
+    depends_on:
+      - loki
+    networks:
+      - aistack-observability
+
+  # ---------- Web-UI: durchsuchbare, persistente Logs + Dashboard ----------
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3011}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      # Lokaler Single-User-Betrieb wie der Rest des Stacks (WEBUI_AUTH=false):
+      # ohne Login direkt nutzbar (anonym = Admin), Login bleibt fuer Klarheit aktiv.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_BASIC_ENABLED=true
+      # DSGVO/Air-Gap: keine Telemetrie, kein Update-Ping, kein News-Feed.
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+      - GF_USERS_DEFAULT_THEME=dark
+      - GF_LOG_LEVEL=warn
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    networks:
+      - aistack-observability
+
+  # ---------- Live-Viewer (Echtzeit-Triage, kein Speicher) ----------
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: unless-stopped
+    ports:
+      - "${DOZZLE_PORT:-8085}:8080"
+    environment:
+      - DOZZLE_NO_ANALYTICS=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - aistack-observability
+
+volumes:
+  loki-data:
+  grafana-data:
+  promtail-positions:
+
+networks:
+  # Eigenes, isoliertes Netz nur fuer die Logging-Dienste (Grafana <-> Loki).
+  # Promtail/Dozzle brauchen nur den Docker-Socket, nicht die App-Netze.
+  aistack-observability:
+    name: aistack-observability
+    driver: bridge

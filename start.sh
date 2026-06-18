@@ -70,6 +70,15 @@ fi
 
 COMPOSE_FILES=(-f docker-compose.yml)
 
+# --- Zentrales Logging/Observability (Loki+Grafana+Dozzle+Promtail) ----------
+#  Standardmaessig AN -> ALLE Container-Logs laufen zentral in Grafana/Loki
+#  zusammen (+ Dozzle-Live-Viewer). Opt-out:  LOGGING_STACK=0 ./start.sh
+LOGGING_STACK="${LOGGING_STACK:-1}"
+if [ "$LOGGING_STACK" = "1" ]; then
+  COMPOSE_FILES+=(-f docker-compose.observability.yml)
+  echo "   + Observability AN -> Grafana :${GRAFANA_PORT:-3011}, Dozzle :${DOZZLE_PORT:-8085} (aus: LOGGING_STACK=0)"
+fi
+
 # --- Hauptmodell-Profil robust aus .env (COMPOSE_PROFILES) bestimmen --------
 #  Genau EIN Hauptmodell (main-qwen|main-gemma). Wird IMMER explizit per
 #  --profile uebergeben -> egal ob die Compose-Version COMPOSE_PROFILES und
@@ -122,6 +131,13 @@ Zugriffe:
   - vLLM (Helfer)  : http://localhost:30001/v1
   - Agent          : http://localhost:9009/v1
   - Qdrant         : http://localhost:6333
+  - Grafana (Logs) : http://localhost:${GRAFANA_PORT:-3011}   Dashboard "AI-Stack — Container-Logs & Fehler"
+  - Dozzle (live)  : http://localhost:${DOZZLE_PORT:-8085}    Live-Logs aller Container
+
+Wo schauen, wenn etwas klemmt (z.B. Websuche)?
+  -> Grafana oeffnen, Dashboard "AI-Stack — Container-Logs & Fehler".
+     Panel "Fehler & Warnungen" zeigt sofort den schuldigen Container; das
+     "Websuche-Pfad"-Panel zeigt presidio (Treffer-Anzahl!) + searxng + OWUI.
 
 Bei Problemen diese Logdatei teilen: $LOG
 EOF
