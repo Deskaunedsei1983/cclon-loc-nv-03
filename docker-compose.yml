@@ -406,6 +406,37 @@ services:
       - presidio-proxy
       - code-sandbox
 
+  # ===================== 8b) INGEST-ROUTER (Upload-Weiche) ==================
+  #  Klassifiziert hochgeladene Dateien und leitet sie ans richtige RAG-Backend:
+  #  Bild-/Scan-/Tabellen-lastig -> Morphik, sonst -> RAGFlow. Wird vom OWUI-Filter
+  #  'ingest_router.py' gefuettert (Chat-Uploads). Kein GPU. Siehe ingest-router/README.md.
+  ingest-router:
+    build:
+      context: ./ingest-router
+    image: ingest-router:local
+    container_name: ingest_router
+    restart: unless-stopped
+    ports:
+      - "9010:8000" # am Host zum Testen (curl -F file=@... :9010/classify)
+    environment:
+      - LOG_LEVEL=${INGEST_LOG_LEVEL:-INFO}
+      # RAGFlow (Text-Ziel) — selbe Instanz wie der Agent, via aistack-rag:
+      - RAGFLOW_API_URL=http://ragflow-cpu:9380
+      - RAGFLOW_API_KEY=${RAGFLOW_API_KEY:-}
+      # Ziel-Dataset/KB, in das Text-Uploads einsortiert werden (MUSS gesetzt sein):
+      - RAGFLOW_INGEST_DATASET_ID=${RAGFLOW_INGEST_DATASET_ID:-}
+      # Morphik (Bild/Tabelle-Ziel) — nur mit --profile morphik aktiv:
+      - MORPHIK_API_URL=${MORPHIK_API_URL:-}
+      - MORPHIK_API_KEY=${MORPHIK_API_KEY:-}
+      # Klassifikations-Stellschrauben:
+      - PDF_TEXT_MIN_CHARS_PER_PAGE=${PDF_TEXT_MIN_CHARS_PER_PAGE:-200}
+      - PDF_TABLE_PAGE_RATIO=${PDF_TABLE_PAGE_RATIO:-0.34}
+      - MAX_SAMPLE_PAGES=${MAX_SAMPLE_PAGES:-5}
+      - SPREADSHEET_TO_MORPHIK=${SPREADSHEET_TO_MORPHIK:-true}
+    networks:
+      - aistack-core # OWUI/Morphik erreichbar
+      - aistack-rag  # RAGFlow (ragflow-cpu:9380) erreichbar
+
   # ===================== 8c) BROWSERLESS (JS-Headless-Scraper) ==============
   #  OWUIs Web-Loader rendert hierueber die Treffer-Seiten mit echtem Chromium
   #  (JS!) -> Tabellen/Zahlen statt leerer HTML-Huelsen. Versions-TOLERANT (CDP),
