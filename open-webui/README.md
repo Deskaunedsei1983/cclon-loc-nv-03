@@ -42,8 +42,10 @@ unberührt** — die sind kein PersistentConfig.
 
 So entsteht das „claude.ai-Feeling" — Suche liefert automatisch Tiefe, ohne Schalter:
 - `WEB_SEARCH_ENGINE=searxng` + `SEARXNG_QUERY_URL` → maskierte Suche (presidio).
-- `WEB_LOADER_ENGINE=playwright` + Dienst `playwright` → **volle, gerenderte Seiten**
-  (Tabellen/Zahlen), nicht nur Snippets. `BYPASS_WEB_SEARCH_WEB_LOADER=false`.
+- OWUIs **eingebauter HTTP-Loader** (`BYPASS_WEB_SEARCH_WEB_LOADER=false`, kein
+  `WEB_LOADER_ENGINE`) → **volle Seiteninhalte** (Tabellen/Zahlen), nicht nur Snippets.
+  *(Playwright-Loader getestet → bricht mit OWUI 0.9.5 ab; eingebauter Loader ist robuster.
+  Fallback bei Fehlern: `BYPASS_WEB_SEARCH_WEB_LOADER=true` = nur Snippets.)*
 - `BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true` → kein RAG-Relevanzfilter, der die
   Treffer sonst verwirft („No sources found").
 
@@ -52,7 +54,7 @@ So entsteht das „claude.ai-Feeling" — Suche liefert automatisch Tiefe, ohne 
 |---|---|
 | `WEB_SEARCH_RESULT_COUNT` | Anzahl Treffer-Seiten (mehr = tiefer, langsamer) |
 | `WEB_LOADER_CONCURRENT_REQUESTS` | Seiten parallel laden |
-| `PLAYWRIGHT_TIMEOUT` | ms pro Seite (langsame Seiten nicht ewig blocken; Einheit s. [OWUI #16801](https://github.com/open-webui/open-webui/issues/16801)) |
+| `BYPASS_WEB_SEARCH_WEB_LOADER` | `true` = nur Snippets (robust, flach); `false` = volle Seiten |
 | `WEB_SEARCH_CONCURRENT_REQUESTS` | SearXNG-Queries parallel (niedrig lassen — presidio drosselt zusätzlich) |
 
 > OWUI bricht Tools nach ~100 s ab. presidio-Pausen (4–7 s × Queries) + Seiten-Laden

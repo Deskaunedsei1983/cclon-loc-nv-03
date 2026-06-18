@@ -272,13 +272,15 @@ docker compose up -d code-sandbox agent open-webui
    weil `ENABLE_PERSISTENT_CONFIG=False` gesetzt ist (OWUI liest die Settings aus der
    ENV statt aus seiner DB). Die Kette:
    - SearXNG hinter dem **PII-Maskier-Proxy** (`http://presidio-proxy:8080/search?q=<query>`),
-   - **volle Seiteninhalte** via **Playwright**-Headless-Browser (`WEB_LOADER_ENGINE=playwright`)
-     → Tabellen/Zahlen statt nur Snippets, gerendertes JS,
+   - **volle Seiteninhalte** über OWUIs **eingebauten HTTP-Loader** (`BYPASS_WEB_SEARCH_WEB_LOADER=false`)
+     → Tabellen/Zahlen statt nur Snippets (server-gerenderte Seiten wie FIFA/kicker),
    - RAG-Relevanzfilter umgangen (`BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true`),
      damit die Treffer auch im Modell-Kontext landen.
 
-   Tuning (Tempo vs. Tiefe): `WEB_SEARCH_RESULT_COUNT`, `WEB_LOADER_CONCURRENT_REQUESTS`,
-   `PLAYWRIGHT_TIMEOUT`. Details: `open-webui/README.md`.
+   Tuning: `WEB_SEARCH_RESULT_COUNT`, `WEB_LOADER_CONCURRENT_REQUESTS`. **Fallback** bei
+   Loader-Fehlern („An error occurred"): `BYPASS_WEB_SEARCH_WEB_LOADER=true` (nur Snippets,
+   robust, aber flacher). Details: `open-webui/README.md`. *(Playwright-Loader wurde
+   getestet → Versions-/WS-Mismatch mit OWUI 0.9.5, daher eingebauter Loader.)*
 5. **System-Prompt für Office-Files** (Workspace → Models → `main`):
    > Wenn der Nutzer Word/Excel/PowerPoint/PDF oder ein Notebook will, SCHREIBE und
    > FÜHRE Python im Code-Interpreter AUS, erzeuge eine ECHTE Datei

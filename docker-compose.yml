@@ -377,21 +377,6 @@ services:
       - presidio-proxy
       - code-sandbox
 
-  # ===================== 8c) PLAYWRIGHT (Headless-Browser-Web-Loader) =======
-  #  OWUIs Web-Loader holt damit ECHTE, gerenderte Seiteninhalte (JS, Tabellen,
-  #  Zahlen) statt nur SearXNG-Snippets -> tiefe, automatische Web-Antworten.
-  #  Nur intern (aistack-core), kein Port nach aussen. Laedt oeffentliche Treffer-
-  #  URLs (keine PII -> Maskierung bleibt auf der Such-QUERY via presidio-proxy).
-  playwright:
-    image: mcr.microsoft.com/playwright:v1.49.1-noble
-    container_name: playwright
-    restart: unless-stopped
-    command: npx -y playwright@1.49.1 run-server --port 3000 --host 0.0.0.0
-    expose:
-      - "3000"
-    networks:
-      - aistack-core
-
   # ===================== 9) OPEN WEBUI (Frontend) ===========================
   open-webui:
     image: ghcr.io/open-webui/open-webui:0.9.5
@@ -431,14 +416,12 @@ services:
       # (32k Kontext) truncaten. Qualitaet der Vorschlaege haengt am Task-Modell (4B).
       - ENABLE_FOLLOW_UP_GENERATION=true
       - ENABLE_AUTOCOMPLETE_GENERATION=true
-      # VOLLE Seiteninhalte (Tabellen/Zahlen) statt nur Snippets: OWUI laedt die Treffer
-      # mit einem echten Headless-Browser (Playwright, rendert JS) -> tiefe Antworten
-      # AUTOMATISCH fuer JEDE Suche, kein User-Schalter ("claude.ai-Feeling").
+      # Volle Seiteninhalte (statt nur Snippets) ueber OWUIs EINGEBAUTEN HTTP-Loader.
+      # (Playwright wurde getestet -> bricht mit OWUI 0.9.5 die Suche komplett ab
+      # "An error occurred", vermutl. Versions-/WS-Mismatch. Eingebauter Loader ist
+      # robuster + ohne Extra-Dienst; holt server-gerenderte Seiten wie FIFA/kicker.)
       - BYPASS_WEB_SEARCH_WEB_LOADER=false          # Loader AN = volle Seiten statt nur Snippets
-      - WEB_LOADER_ENGINE=playwright
-      - PLAYWRIGHT_WS_URI=ws://playwright:3000
-      - WEB_LOADER_CONCURRENT_REQUESTS=4            # Treffer-Seiten parallel laden (eigene Ziel-Sites, kein Engine-Limit)
-      # - PLAYWRIGHT_TIMEOUT=20000                  # ms/Seite tunen, falls Seiten haengen (Einheit s. OWUI #16801)
+      - WEB_LOADER_CONCURRENT_REQUESTS=4            # Treffer-Seiten parallel laden
       # RAG-Relevanzfilter weiter umgehen -> geladene Inhalte DIREKT in den Modell-Kontext:
       - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true
       - ENABLE_CODE_INTERPRETER=true
@@ -460,7 +443,6 @@ services:
       - agent
       - code-sandbox
       - presidio-proxy
-      - playwright
 
   # ==========================================================================
   #  UPGRADE-PFAD A — E2B FRAGMENTS  (echte React-Artifacts wie claude.ai)
