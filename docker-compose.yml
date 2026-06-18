@@ -377,6 +377,26 @@ services:
       - presidio-proxy
       - code-sandbox
 
+  # ===================== 8c) BROWSERLESS (JS-Headless-Scraper) ==============
+  #  OWUIs Web-Loader rendert hierueber die Treffer-Seiten mit echtem Chromium
+  #  (JS!) -> Tabellen/Zahlen statt leerer HTML-Huelsen. Versions-TOLERANT (CDP),
+  #  anders als das mcr-Playwright-run-server (das an OWUI 0.9.5 zerbrach).
+  #  Nur intern (aistack-core), kein Port nach aussen. Laedt nur oeffentliche
+  #  Treffer-URLs -> keine PII (Maskierung bleibt auf der Such-QUERY via presidio).
+  #  [VERIFY] Image-Tag + dass OWUIs Playwright-Client zu browserless v2 passt.
+  browserless:
+    image: ghcr.io/browserless/chromium:latest
+    container_name: browserless
+    restart: unless-stopped
+    environment:
+      - TOKEN=${BROWSERLESS_TOKEN:-aistack-browserless}
+      - CONCURRENT=4              # gleichzeitige Browser-Sessions
+      - TIMEOUT=30000             # ms pro Seite (haengende Seiten nicht ewig)
+    expose:
+      - "3000"
+    networks:
+      - aistack-core
+
   # ===================== 9) OPEN WEBUI (Frontend) ===========================
   open-webui:
     image: ghcr.io/open-webui/open-webui:0.9.5
@@ -417,12 +437,16 @@ services:
       # (32k Kontext) truncaten. Qualitaet der Vorschlaege haengt am Task-Modell (4B).
       - ENABLE_FOLLOW_UP_GENERATION=true
       - ENABLE_AUTOCOMPLETE_GENERATION=true
-      # Web-Loader AUS -> SearXNG-Snippets DIREKT nutzen. ZUVERLAESSIG: kein Seiten-
-      # Fetchen, das aus der Server-IP an bot-geschuetzten Sites scheitert (-> "No
-      # results found"/"An error occurred"). Nachteil: flacher (keine Live-Tabellen-
-      # Zahlen). Fuer echte Tiefe braeuchte es einen robusten Scraper (browserless/Firecrawl).
-      - BYPASS_WEB_SEARCH_WEB_LOADER=true
-      # RAG-Relevanzfilter umgehen -> Snippets DIREKT in den Modell-Kontext:
+      # TIEFE Inhalte: OWUI laedt die Treffer ueber 'browserless' (Headless-Chromium,
+      # rendert JS) -> echte Tabellen/Zahlen statt leerer HTML-Huelsen. Versions-
+      # tolerant (CDP) -> bricht NICHT wie das mcr-Playwright. browserless laedt nur
+      # oeffentliche Treffer-URLs (keine PII; Maskierung bleibt auf der Such-QUERY).
+      # Fallback bei Loader-Fehlern: BYPASS_WEB_SEARCH_WEB_LOADER=true (nur Snippets).
+      - BYPASS_WEB_SEARCH_WEB_LOADER=false
+      - WEB_LOADER_ENGINE=playwright
+      - PLAYWRIGHT_WS_URI=ws://browserless:3000/chromium/playwright?token=${BROWSERLESS_TOKEN:-aistack-browserless}
+      - WEB_LOADER_CONCURRENT_REQUESTS=3
+      # RAG-Relevanzfilter umgehen -> geladene Inhalte DIREKT in den Modell-Kontext:
       - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
@@ -443,6 +467,7 @@ services:
       - agent
       - code-sandbox
       - presidio-proxy
+      - browserless
 
   # ==========================================================================
   #  UPGRADE-PFAD A — E2B FRAGMENTS  (echte React-Artifacts wie claude.ai)

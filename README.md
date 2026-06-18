@@ -272,15 +272,16 @@ docker compose up -d code-sandbox agent open-webui
    weil `ENABLE_PERSISTENT_CONFIG=False` gesetzt ist (OWUI liest die Settings aus der
    ENV statt aus seiner DB). Die Kette:
    - SearXNG hinter dem **PII-Maskier-Proxy** (`http://presidio-proxy:8080/search?q=<query>`),
-   - **volle Seiteninhalte** über OWUIs **eingebauten HTTP-Loader** (`BYPASS_WEB_SEARCH_WEB_LOADER=false`)
-     → Tabellen/Zahlen statt nur Snippets (server-gerenderte Seiten wie FIFA/kicker),
+   - **volle, JS-gerenderte Seiteninhalte** über den **`browserless`**-Headless-Chromium
+     (`WEB_LOADER_ENGINE=playwright`, `PLAYWRIGHT_WS_URI=ws://browserless:3000/chromium/playwright?token=…`)
+     → echte Tabellen/Zahlen statt leerer HTML-Hüllen,
    - RAG-Relevanzfilter umgangen (`BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true`),
      damit die Treffer auch im Modell-Kontext landen.
 
-   Tuning: `WEB_SEARCH_RESULT_COUNT`, `WEB_LOADER_CONCURRENT_REQUESTS`. **Fallback** bei
-   Loader-Fehlern („An error occurred"): `BYPASS_WEB_SEARCH_WEB_LOADER=true` (nur Snippets,
-   robust, aber flacher). Details: `open-webui/README.md`. *(Playwright-Loader wurde
-   getestet → Versions-/WS-Mismatch mit OWUI 0.9.5, daher eingebauter Loader.)*
+   Tuning: `WEB_SEARCH_RESULT_COUNT`, `WEB_LOADER_CONCURRENT_REQUESTS`, browserless `TIMEOUT`.
+   **Fallback** bei Loader-Fehlern („An error occurred"/„No results"): `BYPASS_WEB_SEARCH_WEB_LOADER=true`
+   (nur Snippets, robust, aber flacher). *(Das mcr-Playwright-`run-server` zerbrach an OWUI 0.9.5
+   per Versions-Mismatch — browserless ist CDP-/versions-tolerant.)*
 5. **System-Prompt für Office-Files** (Workspace → Models → `main`):
    > Wenn der Nutzer Word/Excel/PowerPoint/PDF oder ein Notebook will, SCHREIBE und
    > FÜHRE Python im Code-Interpreter AUS, erzeuge eine ECHTE Datei

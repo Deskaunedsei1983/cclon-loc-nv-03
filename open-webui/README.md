@@ -42,10 +42,11 @@ unberührt** — die sind kein PersistentConfig.
 
 So entsteht das „claude.ai-Feeling" — Suche liefert automatisch Tiefe, ohne Schalter:
 - `WEB_SEARCH_ENGINE=searxng` + `SEARXNG_QUERY_URL` → maskierte Suche (presidio).
-- OWUIs **eingebauter HTTP-Loader** (`BYPASS_WEB_SEARCH_WEB_LOADER=false`, kein
-  `WEB_LOADER_ENGINE`) → **volle Seiteninhalte** (Tabellen/Zahlen), nicht nur Snippets.
-  *(Playwright-Loader getestet → bricht mit OWUI 0.9.5 ab; eingebauter Loader ist robuster.
-  Fallback bei Fehlern: `BYPASS_WEB_SEARCH_WEB_LOADER=true` = nur Snippets.)*
+- **`browserless`**-Headless-Chromium als Loader (`WEB_LOADER_ENGINE=playwright`,
+  `PLAYWRIGHT_WS_URI=ws://browserless:3000/chromium/playwright?token=…`,
+  `BYPASS_WEB_SEARCH_WEB_LOADER=false`) → **volle, JS-gerenderte Seiten** (Tabellen/Zahlen).
+  Versions-tolerant (CDP), anders als das mcr-Playwright (zerbrach an OWUI 0.9.5).
+  *(Fallback bei Fehlern: `BYPASS_WEB_SEARCH_WEB_LOADER=true` = nur Snippets, robust/flach.)*
 - `BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true` → kein RAG-Relevanzfilter, der die
   Treffer sonst verwirft („No sources found").
 
