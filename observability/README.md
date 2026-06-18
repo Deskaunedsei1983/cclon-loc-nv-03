@@ -6,14 +6,36 @@ Eine Sammelstelle für die Logs **aller** Container, damit nie wieder unklar ist
 
 ## Bestandteile
 
+**Logs:**
+
 | Dienst   | Aufgabe | Zugriff |
 |----------|---------|---------|
 | **promtail** | Liest via Docker-Socket (read-only) die Logs **jedes** laufenden Containers (Kernstack + RAGFlow + vLLM + Upgrades) und schickt sie an Loki. Keine Per-Container-Konfig. | – |
 | **loki**     | Speichert alles durchsuchbar auf Platte (14 Tage Vorhaltung). | intern `:3100` |
-| **grafana**  | Eine Web-UI: Volltext-/Level-/Zeit-Suche über den ganzen Stack, inkl. fertigem Dashboard. | http://localhost:3011 |
+| **grafana**  | Eine Web-UI: Logs (Loki) **und** Metriken (Prometheus), inkl. fertiger Dashboards. | http://localhost:3011 |
 | **dozzle**   | Ultraleichter **Live**-Viewer aller Container-Logs (Echtzeit-Triage). | http://localhost:8085 |
 
-Ports/Passwörter über die `.env` (`GRAFANA_PORT`, `GRAFANA_PASSWORD`, `DOZZLE_PORT`).
+**Metriken** (das, was Dozzle NICHT kann — GPU/VRAM, Disk-I/O, Netz in/out):
+
+| Dienst   | Aufgabe | Zugriff |
+|----------|---------|---------|
+| **netdata** | All-in-one **Live**-Metriken mit eigener UI: erkennt GPU/VRAM/Util, Disk-R/W, Netz in/out **automatisch** (pro Sekunde). | http://localhost:19999 |
+| **prometheus** | Metrik-Speicher (15 Tage); scrapt die drei Exporter; Datenquelle in Grafana. | http://localhost:9090 |
+| **node-exporter** | Host-Metriken: CPU/RAM/Disk/Netz pro Interface. | intern `:9100` |
+| **cadvisor** | Metriken **pro Container** (auch interner Container-Verkehr). | intern `:8080` |
+| **nvidia-exporter** | GPU: Auslastung, VRAM, Temperatur, Power (via `nvidia-smi`). | intern `:9835` |
+
+In Grafana liegt dafür das Dashboard **„AI-Stack — Host & GPU (Metriken)"**.
+Ports/Passwörter über die `.env` (`GRAFANA_PORT`, `DOZZLE_PORT`, `NETDATA_PORT`,
+`PROMETHEUS_PORT`, `GRAFANA_PASSWORD`).
+
+> **GPU-Panels leer in Grafana?** Die `nvidia_smi_*`-Metriknamen können je nach
+> Exporter-Version minimal abweichen. Echte Namen prüfen:
+> `docker exec prometheus wget -qO- http://nvidia-exporter:9835/metrics | grep -i util`
+> und die Panel-Query anpassen. **Netdata zeigt die GPU sowieso sofort** (eigene UI).
+> Reichhaltigere Fertig-Dashboards in Grafana per Import (Dashboard-ID): **1860**
+> (Node Exporter Full), **14282** (cAdvisor), **14574** (nvidia_gpu_exporter) —
+> jeweils Datenquelle *Prometheus* wählen.
 
 ## Starten / Stoppen
 

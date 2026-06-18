@@ -1,0 +1,30 @@
+# ============================================================================
+#  Prometheus — Metrik-Speicher (scrape-Ziele = die Exporter)
+#  ---------------------------------------------------------------------------
+#  node-exporter   -> Host: CPU/RAM/Disk-I/O/Netz pro Interface
+#  cadvisor        -> pro Container: CPU/RAM/Netz/Disk (auch "interner" Verkehr)
+#  nvidia-exporter -> GPU: Auslastung, VRAM, Temperatur, Power (via nvidia-smi)
+#  Datenquelle in Grafana ist bereits vorprovisioniert (prometheus.yml dort).
+# ============================================================================
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    monitor: aistack
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: node          # Host (CPU/RAM/Disk/Netz)
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: cadvisor      # je Container
+    static_configs:
+      - targets: ['cadvisor:8080']
+
+  - job_name: nvidia        # GPU/VRAM/Util/Temp/Power
+    static_configs:
+      - targets: ['nvidia-exporter:9835']

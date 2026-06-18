@@ -272,9 +272,14 @@ zusammen. Der Stack startet **automatisch mit** (`./start.sh`), Details:
 
 | Dienst | Zweck | Zugriff |
 |--------|-------|---------|
-| **Grafana** | durchsuchbare, **persistente** Logs (14 Tage) + fertiges Dashboard | http://localhost:3011 |
-| **Dozzle**  | **Live**-Viewer aller Container in Echtzeit | http://localhost:8085 |
-| Loki / Promtail | Speicher bzw. Sammler (via Docker-Socket, alle Container) | intern |
+| **Grafana** | **Logs** (Loki) **+ Metriken** (Prometheus), persistent, fertige Dashboards | http://localhost:3011 |
+| **Dozzle**  | **Live**-Viewer aller Container-Logs in Echtzeit | http://localhost:8085 |
+| **Netdata** | **Live**-Metriken mit eigener UI: GPU/VRAM, Disk-I/O, Netz in/out (auto) | http://localhost:19999 |
+| Loki/Promtail · Prometheus + node/cadvisor/nvidia-Exporter | Speicher + Sammler für Logs bzw. Metriken (Host, je Container, GPU) | intern |
+
+> Was Dozzle **nicht** kann (GPU/VRAM, Disk-Raten, Netz in/out), liefern **Netdata**
+> (sofort, eigene UI) und das Grafana-Dashboard **„Host & GPU"** (Prometheus). Details:
+> [`observability/README.md`](observability/README.md).
 
 **Triage in 10 Sekunden:** Grafana → Dashboard **„AI-Stack — Container-Logs &
 Fehler"**:

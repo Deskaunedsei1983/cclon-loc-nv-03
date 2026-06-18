@@ -99,14 +99,133 @@ services:
     networks:
       - aistack-observability
 
+  # ===========================================================================
+  #  METRIKEN: Prometheus (TSDB) + Exporter -> in dasselbe Grafana eingeklinkt
+  #  (Loki = Logs, Prometheus = Metriken). Liefert die Graphen, die Dozzle NICHT
+  #  kann: GPU/VRAM, Disk-I/O, Netz in/out, alles pro Host UND pro Container.
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - aistack-observability
+
+  # Host-Metriken: CPU/RAM/Disk-I/O/Netz pro Interface
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    expose:
+      - "9100"
+    networks:
+      - aistack-observability
+
+  # Pro-Container-Metriken: CPU/RAM/Netz/Disk (auch "interner" Container-Verkehr)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    expose:
+      - "8080"
+    networks:
+      - aistack-observability
+
+  # GPU-Metriken: Auslastung, VRAM, Temperatur, Power (via nvidia-smi -> robust
+  # auch fuer brandneue GPUs/Blackwell, anders als DCGM). Nur lesend, kein VRAM-Bedarf.
+  nvidia-exporter:
+    image: utkuozdemir/nvidia_gpu_exporter:1.2.1
+    container_name: nvidia-exporter
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility]
+    expose:
+      - "9835"
+    networks:
+      - aistack-observability
+
+  # All-in-one Live-Metriken mit EIGENER UI (Auto-Erkennung GPU/Disk/Netz, pro
+  # Sekunde). Null-Config; ideal zum sofortigen "was zieht gerade?"-Draufschauen.
+  netdata:
+    image: netdata/netdata:stable
+    container_name: netdata
+    restart: unless-stopped
+    pid: host
+    hostname: aistack-host
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=utility
+      - DO_NOT_TRACK=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility]
+    ports:
+      - "${NETDATA_PORT:-19999}:19999"
+    volumes:
+      - netdata-config:/etc/netdata
+      - netdata-lib:/var/lib/netdata
+      - netdata-cache:/var/cache/netdata
+      - /:/host/root:ro,rslave
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /etc/os-release:/host/etc/os-release:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/log:/host/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - aistack-observability
+
 volumes:
   loki-data:
   grafana-data:
   promtail-positions:
+  prometheus-data:
+  netdata-config:
+  netdata-lib:
+  netdata-cache:
 
 networks:
-  # Eigenes, isoliertes Netz nur fuer die Logging-Dienste (Grafana <-> Loki).
-  # Promtail/Dozzle brauchen nur den Docker-Socket, nicht die App-Netze.
+  # Eigenes, isoliertes Netz nur fuer die Logging-/Metrik-Dienste.
+  # Promtail/Dozzle/cAdvisor/Netdata brauchen v.a. den Docker-Socket bzw. Host-Mounts.
   aistack-observability:
     name: aistack-observability
     driver: bridge
