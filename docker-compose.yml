@@ -389,6 +389,7 @@ services:
     environment:
       - "OPENAI_API_BASE_URLS=http://vllm-main:5568/v1;http://vllm-helper:30001/v1;http://agent:9000/v1"
       - "OPENAI_API_KEYS=not-needed;not-needed;not-needed"
+      - ENABLE_OLLAMA_API=false   # wir nutzen nur OpenAI-kompatibel (vLLM) -> kein Ollama-Polling/Connection-Error
       - WEBUI_AUTH=false
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
       - ANONYMIZED_TELEMETRY=false
@@ -416,13 +417,12 @@ services:
       # (32k Kontext) truncaten. Qualitaet der Vorschlaege haengt am Task-Modell (4B).
       - ENABLE_FOLLOW_UP_GENERATION=true
       - ENABLE_AUTOCOMPLETE_GENERATION=true
-      # Volle Seiteninhalte (statt nur Snippets) ueber OWUIs EINGEBAUTEN HTTP-Loader.
-      # (Playwright wurde getestet -> bricht mit OWUI 0.9.5 die Suche komplett ab
-      # "An error occurred", vermutl. Versions-/WS-Mismatch. Eingebauter Loader ist
-      # robuster + ohne Extra-Dienst; holt server-gerenderte Seiten wie FIFA/kicker.)
-      - BYPASS_WEB_SEARCH_WEB_LOADER=false          # Loader AN = volle Seiten statt nur Snippets
-      - WEB_LOADER_CONCURRENT_REQUESTS=4            # Treffer-Seiten parallel laden
-      # RAG-Relevanzfilter weiter umgehen -> geladene Inhalte DIREKT in den Modell-Kontext:
+      # Web-Loader AUS -> SearXNG-Snippets DIREKT nutzen. ZUVERLAESSIG: kein Seiten-
+      # Fetchen, das aus der Server-IP an bot-geschuetzten Sites scheitert (-> "No
+      # results found"/"An error occurred"). Nachteil: flacher (keine Live-Tabellen-
+      # Zahlen). Fuer echte Tiefe braeuchte es einen robusten Scraper (browserless/Firecrawl).
+      - BYPASS_WEB_SEARCH_WEB_LOADER=true
+      # RAG-Relevanzfilter umgehen -> Snippets DIREKT in den Modell-Kontext:
       - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
