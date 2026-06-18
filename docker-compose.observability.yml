@@ -165,6 +165,14 @@ services:
     image: utkuozdemir/nvidia_gpu_exporter:1.2.1
     container_name: nvidia-exporter
     restart: unless-stopped
+    # WICHTIG bei sehr neuen Treibern (Blackwell): NICHT die Default-Autoerkennung
+    # (--query-field-names=AUTO) nutzen. nvidia-smi liefert dort neue Felder mit
+    # Einheiten wie [us]/[ms] (z.B. clocks_event_reasons_counters.*, power_smoothing.*),
+    # die der Exporter nicht in gueltige Prometheus-Namen uebersetzen kann -> Panic
+    # "is not a valid metric name". Darum eine feste, bewaehrte Feldliste vorgeben:
+    command:
+      - --query-field-names=uuid,name,driver_version,pstate,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,fan.speed,power.draw,power.limit,clocks.current.graphics,clocks.current.sm,clocks.current.memory,clocks.current.video
+      - --web.listen-address=:9835
     deploy:
       resources:
         reservations:
