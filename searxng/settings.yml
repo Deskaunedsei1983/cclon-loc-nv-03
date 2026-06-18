@@ -1,36 +1,56 @@
 # ============================================================================
-#  GLOBAL-CONFIG: Konfiguriert für sequentialisierte Proxy-Bursts
+#  SearXNG — JSON-API hinter dem Presidio-Masking-Proxy
+#  ---------------------------------------------------------------------------
+#  WICHTIG: 'json' MUSS in formats stehen, sonst liefert ?format=json -> HTTP 403.
+#
+#  ENGINE-STRATEGIE (Lehre aus dem mojeek/qwant-Regress vom 17.6.):
+#  REDUNDANZ statt Minimalismus. Zwei Engines = kein Puffer. Blocken beide aus
+#  der Server-IP "soft" (HTTP 200 + 0 Treffer, KEIN 429 -> erscheint NICHT in
+#  unresponsive_engines), ist die ganze Suche tot -> OWUI "No results found".
+#  Bewiesen am 18.6.: q="wetter berlin" -> results 0, unresponsive_engines [].
+#
+#  Darum hier ein BREITER Satz vertraeglicher Engines + kurze Sperrzeiten:
+#  faellt eine per CAPTCHA/429 aus, tragen die anderen weiter. wikipedia/wikidata
+#  sind API-basiert, blocken praktisch nie -> garantierter Ergebnis-Boden.
+#  Bewusst NICHT drin: google/startpage (Parser bricht + CAPTCHA-Schleudern fuer
+#  Server-IPs). DDG/Brave/Bing/Mojeek/Qwant koennen zeitweise soft-blocken -> aber
+#  in der Masse faengt das die Redundanz ab (statt alles auf 2 Pferde zu setzen).
 # ============================================================================
-
 use_default_settings:
   engines:
     keep_only:
-      # NUR die unabhaengigen, die aus deiner Server-IP NICHT raten/CAPTCHA-en.
-      # brave/bing/ddg/google rate-limiten (429/CAPTCHA) -> bewusst RAUS.
-      # Mit dem Playwright-Vollseiten-Loader reichen 2 gute Engines fuer Tiefe.
-      - mojeek
-      - qwant
+      - bing            # breiter Index, aus Server-IPs vergleichsweise vertraeglich
+      - brave           # eigener Index
+      - duckduckgo      # gute Breite (faellt bei CAPTCHA kurz aus, kommt zurueck)
+      - mojeek          # unabhaengiger Index
+      - qwant           # eigener EU-Index
+      - wikipedia       # API: Fakten/Entitaeten, blockt ~nie -> Ergebnis-Boden
+      - wikidata        # API
 
 server:
-  limiter: false
+  # secret_key wird vom Container-Entrypoint per ENV (SEARXNG_SECRET) injiziert.
+  limiter: false                 # interner, vertrauenswuerdiger Aufruf -> Limiter aus
   image_proxy: true
 
 search:
   formats:
     - html
     - json
-  default_lang: "" # <--- Leer lassen = Automatische Erkennung / Global
-
+  default_lang: ""               # leer = Auto-Erkennung / global
+  # Geblockte Engine schneller zurueck als die Defaults (Captcha-Default = 1 h!),
+  # aber lang genug, dass wir sie nicht im Sekundentakt erneut triggern:
   suspended_times:
-    SearxEngineCaptcha: 10
-    SearxEngineTooManyRequests: 5
-    SearxEngineAccessDenied: 5
+    SearxEngineCaptcha: 300           # 5 min
+    SearxEngineTooManyRequests: 60    # 1 min
+    SearxEngineAccessDenied: 60       # 1 min
 
 outgoing:
-  request_timeout: 12.0 # Höherer Timeout, da Deep-Research-Seiten manchmal brauchen
-  pool_connections: 200
-  pool_maxsize: 50
+  request_timeout: 10.0          # langsame Engines (Mojeek/Brave) nicht vorzeitig droppen
+  pool_connections: 100
+  pool_maxsize: 20
   enable_http2: true
+  # Hinweis: Tor-Egress wurde getestet und macht es SCHLECHTER (Engines liefern
+  # ueber Tor-Exit-IPs leere/geblockte Ergebnisse) -> bewusst direkter Egress.
 
 # DSGVO: keine externen Metriken/Telemetrie.
 general:
@@ -39,4 +59,3 @@ general:
 
 ui:
   static_use_hash: true
-

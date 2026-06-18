@@ -540,8 +540,11 @@ docker compose build --no-cache agent code-sandbox presidio-proxy
 > `searxng/settings.yml` dorthin. So bleibt `git pull` **ohne `sudo`**. Nur die
 > SearXNG-Settings geändert und schnell neu laden (ohne ganzes `start.sh`):
 > ```bash
-> cp -f searxng/settings.yml searxng/runtime/settings.yml
-> docker compose -f docker-compose.yml restart searxng
+> ./reload-searxng.sh        # spiegelt -> recreate -> verifiziert Engine-Satz + Live-Test
 > ```
+> (manuell-äquivalent: `cp -f searxng/settings.yml searxng/runtime/settings.yml`
+> dann `docker compose -f docker-compose.yml up -d --force-recreate --no-deps searxng`).
+> **Wichtig:** Ein blosses `docker compose restart searxng` ohne vorheriges
+> Spiegeln nutzt die ALTE `runtime/`-Kopie → Änderungen scheinen "nicht zu wirken".
 > Einmalig die alten, vom Container gechownten Dateien zurückholen (falls noch nötig):
 > `sudo chown -R "$USER:$USER" searxng/`
