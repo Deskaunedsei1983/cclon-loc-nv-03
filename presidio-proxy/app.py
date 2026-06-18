@@ -22,6 +22,7 @@ import asyncio
 import logging
 import os
 import random
+import time
 
 import httpx
 from fastapi import FastAPI, Request
@@ -53,11 +54,24 @@ SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 GOOGLE_PSE_API_KEY = os.environ.get("GOOGLE_PSE_API_KEY", "")
 GOOGLE_PSE_ENGINE_ID = os.environ.get("GOOGLE_PSE_ENGINE_ID", "")
 
+# --- Anti-Flood-Drossel ------------------------------------------------------
+# Serialisiert ALLE Suchen (genau EIN Call gleichzeitig, via search_lock) und
+# haelt zwischen aufeinanderfolgenden Calls eine variable Pause ein. Schuetzt die
+# SearXNG-Engines UND externe Such-APIs (z.B. Brave-Free = 1 req/s) davor, von
+# parallelen OWUI-Suchbursts geflutet zu werden. Werte per ENV justierbar.
+SEARCH_THROTTLE = os.environ.get("SEARCH_THROTTLE", "true").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+SEARCH_MIN_PAUSE = float(os.environ.get("SEARCH_MIN_PAUSE", "5") or "5")
+SEARCH_MAX_PAUSE = float(os.environ.get("SEARCH_MAX_PAUSE", "10") or "10")
+
 app = FastAPI(title="PII-Masking Search Proxy")
 
 # --- Globale Bremse für Parallel-Anfragen (Throttling Queue) ----------------
 # Dieser Lock sorgt dafür, dass im async-Event-Loop IMMER nur eine Suche läuft.
+# (uvicorn laeuft mit 1 Worker -> der Lock ist prozessweit wirksam.)
 search_lock = asyncio.Lock()
+_last_call = 0.0  # monotonic-Zeit des letzten Such-Calls (fuer den Mindestabstand)
 
 # --- Presidio Engines (einmalig laden) --------------------------------------
 # NLP-Engine fuer DE + EN konfigurieren (sonst kennt der Analyzer nur 'en').
@@ -188,41 +202,44 @@ async def search(request: Request):
     params.setdefault("format", "json")
     masked_q = params["q"]
 
-    # 2a. API-Backend (Brave/Tavily/Serper/Google-PSE): IP-unabhaengige offizielle
-    #     Such-API. KEINE Burst-Bremse noetig (eigene Rate-Limits). Schon maskiert.
-    if SEARCH_BACKEND != "searxng":
-        try:
-            results = await _api_search(masked_q)
-            log.info("[API:%s] %d Treffer fuer '%s'", SEARCH_BACKEND, len(results), masked_q)
-            if not results:
-                log.warning("[API:%s] 0 Treffer -> API-Key/Kontingent/Query pruefen.", SEARCH_BACKEND)
-            return JSONResponse({"results": results,
-                                 "number_of_results": len(results),
-                                 "query": masked_q})
-        except httpx.HTTPStatusError as e:
-            code = e.response.status_code if e.response is not None else "?"
-            body = e.response.text[:300] if e.response is not None else ""
-            log.error("[API:%s] HTTP %s: %s", SEARCH_BACKEND, code, body)
-            return JSONResponse({"error": f"{SEARCH_BACKEND}: HTTP {code}", "results": []},
-                                status_code=502)
-        except Exception as e:
-            log.exception("[API:%s] Suche fehlgeschlagen", SEARCH_BACKEND)
-            return JSONResponse({"error": str(e), "results": []}, status_code=502)
-
-    # 2b. SearXNG-Backend (Default): X-Forwarded-For gegen Bot-Warnungen + Bremse.
-    fwd_headers = {"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
-
     log.info("[Queue] Suchanfrage eingereiht: '%s'", masked_q)
 
-    # 2. Warteschlange und künstliche Verzögerung aktivieren
+    # 2. Anti-Flood-Drossel fuer ALLE Backends: der search_lock laesst genau EINEN
+    #    Call gleichzeitig durch; davor wird auf SEARCH_MIN..MAX_PAUSE Abstand zum
+    #    vorherigen Call-START aufgefuellt (erster Call wartet nicht). So sieht jede
+    #    Engine/API nur sauber sequentielle Einzelanfragen statt paralleler Bursts.
+    global _last_call
     async with search_lock:
-        # Erzeuge eine variable Pause zwischen 4.0 und 7.0 Sekunden
-        cooldown = random.uniform(4.0, 7.0)
-        log.info(
-            "[Queue] Slot belegt. Erzwungene Atempause für %s Sekunden zur Bot-Vermeidung...",
-            f"{cooldown:.2f}",
-        )
-        await asyncio.sleep(cooldown)
+        if SEARCH_THROTTLE:
+            gap = random.uniform(SEARCH_MIN_PAUSE, SEARCH_MAX_PAUSE)
+            wait = _last_call + gap - time.monotonic()
+            if wait > 0:
+                log.info("[Queue] Anti-Flood: %.2fs Pause vor '%s'", wait, masked_q)
+                await asyncio.sleep(wait)
+        _last_call = time.monotonic()
+
+        # 2a. API-Backend (Brave/Tavily/Serper/Google-PSE) -> normalisiertes JSON.
+        if SEARCH_BACKEND != "searxng":
+            try:
+                results = await _api_search(masked_q)
+                log.info("[API:%s] %d Treffer fuer '%s'", SEARCH_BACKEND, len(results), masked_q)
+                if not results:
+                    log.warning("[API:%s] 0 Treffer -> API-Key/Kontingent/Query pruefen.", SEARCH_BACKEND)
+                return JSONResponse({"results": results,
+                                     "number_of_results": len(results),
+                                     "query": masked_q})
+            except httpx.HTTPStatusError as e:
+                code = e.response.status_code if e.response is not None else "?"
+                body = e.response.text[:300] if e.response is not None else ""
+                log.error("[API:%s] HTTP %s: %s", SEARCH_BACKEND, code, body)
+                return JSONResponse({"error": f"{SEARCH_BACKEND}: HTTP {code}", "results": []},
+                                    status_code=502)
+            except Exception as e:
+                log.exception("[API:%s] Suche fehlgeschlagen", SEARCH_BACKEND)
+                return JSONResponse({"error": str(e), "results": []}, status_code=502)
+
+        # 2b. SearXNG-Backend (Default): X-Forwarded-For gegen Bot-Warnungen.
+        fwd_headers = {"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "127.0.0.1"}
 
         # 3. Request an SearXNG absenden
         try:

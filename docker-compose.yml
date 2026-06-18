@@ -322,6 +322,11 @@ services:
       # maskieren -> dann API). Aktivieren via .env; Default-Fallbacks = aus/leer.
       - SEARCH_BACKEND=${SEARCH_BACKEND:-searxng}
       - SEARCH_RESULT_COUNT=${WEB_SEARCH_RESULT_COUNT:-10}
+      # Anti-Flood: serialisiert ALLE Suchen (1 Call gleichzeitig) + variable Pause
+      # ZWISCHEN Calls (Default 5-10s). Schuetzt Engines UND APIs vor OWUI-Bursts.
+      - SEARCH_THROTTLE=${SEARCH_THROTTLE:-true}
+      - SEARCH_MIN_PAUSE=${SEARCH_MIN_PAUSE:-5}
+      - SEARCH_MAX_PAUSE=${SEARCH_MAX_PAUSE:-10}
       - BRAVE_API_KEY=${BRAVE_API_KEY:-}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
       - SERPER_API_KEY=${SERPER_API_KEY:-}
