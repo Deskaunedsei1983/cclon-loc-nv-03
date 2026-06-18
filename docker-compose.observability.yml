@@ -70,10 +70,14 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_BASIC_ENABLED=true
-      # DSGVO/Air-Gap: keine Telemetrie, kein Update-Ping, kein News-Feed.
+      # DSGVO/Air-Gap: keine Telemetrie, kein Update-Ping, kein News-Feed,
+      # kein Plugin-Update-Check, kein Gravatar (kein externer Avatar-Abruf).
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_ANALYTICS_FEEDBACK_LINKS_ENABLED=false
       - GF_NEWS_NEWS_FEED_ENABLED=false
+      - GF_USERS_DISABLE_GRAVATAR=true
       - GF_USERS_DEFAULT_THEME=dark
       - GF_LOG_LEVEL=warn
     volumes:

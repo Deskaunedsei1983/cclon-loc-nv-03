@@ -37,6 +37,39 @@ Ports/Passwörter über die `.env` (`GRAFANA_PORT`, `DOZZLE_PORT`, `NETDATA_PORT
 > (Node Exporter Full), **14282** (cAdvisor), **14574** (nvidia_gpu_exporter) —
 > jeweils Datenquelle *Prometheus* wählen.
 
+## Datenschutz / Telemetrie (DSGVO)
+
+Der komplette Monitoring-/Log-Stack läuft **lokal** und sendet **keine** Daten in
+die Cloud. Default-Telemetrie ist bei jeder Komponente per Config abgeschaltet:
+
+| Komponente | Telemetrie ab Werk | Hier abgeschaltet durch |
+|------------|--------------------|-------------------------|
+| **Grafana** | Usage-Stats, Update-/Plugin-Check, News-Feed, Gravatar | `GF_ANALYTICS_REPORTING_ENABLED=false`, `GF_ANALYTICS_CHECK_FOR_UPDATES=false`, `GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false`, `GF_NEWS_NEWS_FEED_ENABLED=false`, `GF_USERS_DISABLE_GRAVATAR=true` |
+| **Loki** | Anonyme Nutzungs-Statistik → stats.grafana.org | `analytics.reporting_enabled: false` (loki-config.yml) |
+| **Netdata** | Anonyme Statistik (PostHog); Cloud nur mit Claim-Token | `DO_NOT_TRACK=1` **und** kein Claim-Token gesetzt → keine Cloud-Verbindung |
+| **Dozzle** | Anonyme Analytics | `DOZZLE_NO_ANALYTICS=true` |
+| **Prometheus** | — (keine) | scrapt ausschließlich lokale Ziele, kein `remote_write` |
+| **node-exporter / cAdvisor / nvidia-exporter** | — (keine) | reine lokale Exporter, kein Phone-Home |
+| **Promtail** | — (Reporting liegt bei Loki) | s. Loki |
+
+**Verifizieren** (sollte leer bleiben — kein Verkehr nach außen):
+```bash
+# Versucht ein Container, raus ins Internet zu funken? (Beispiel Netdata/Grafana)
+docker exec netdata sh -c "cat /var/lib/netdata/.opt-out-from-anonymous-statistics" 2>/dev/null && echo "Netdata-Telemetrie: opt-out aktiv"
+sudo ss -tnp | grep -E "grafana|netdata|loki|prometheus" | grep -vE "127.0.0.1|::1|172\.|10\.|192\.168\." || echo "Keine externen Verbindungen der Monitoring-Container."
+```
+
+**Maximale Garantie (optional, Netz-Ebene):** Da keiner dieser Dienste zur
+Laufzeit Internet braucht, kann das Monitoring-Netz komplett egress-dicht gemacht
+werden — in `docker-compose.observability.yml` unter `networks:` ergänzen:
+```yaml
+  aistack-observability:
+    internal: true   # blockt jeglichen Ausgang ins Internet (Host→UI bleibt erreichbar)
+```
+Trade-off: Dann funktioniert **Grafanas Online-Import** von Dashboards per ID
+(1860 etc.) nicht mehr — JSON müsste man dann offline einspielen. Der restliche
+AI-Stack (inkl. **Websearch**) liegt auf anderen Netzen und bleibt unberührt.
+
 ## Starten / Stoppen
 
 Standardmäßig **automatisch an** über `./start.sh` (alle Logs laufen sofort zusammen).
