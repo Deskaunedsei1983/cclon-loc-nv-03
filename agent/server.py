@@ -1,7 +1,7 @@
 """
 OpenAI-kompatibler Wrapper. Waehlt die Agent-Variante per ENV:
-  AGENT_IMPL=langgraph  (Default)  -> agent_langgraph.run_agent  (Critic-Loop)
-  AGENT_IMPL=pydantic              -> agent_pydantic.run_agent (optional, braucht pydantic-ai 1.x)
+  AGENT_IMPL=pydantic   (Default)  -> agent_pydantic.run_agent  (Tool-Calling, braucht pydantic-ai 1.x)
+  AGENT_IMPL=langgraph             -> agent_langgraph.run_agent  (Critic-Loop)
 Erscheint in Open WebUI als Modell "research-agent".
 """
 
@@ -13,7 +13,7 @@ import uuid
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-IMPL = os.environ.get("AGENT_IMPL", "langgraph").lower()
+IMPL = os.environ.get("AGENT_IMPL", "pydantic").lower()
 if IMPL == "pydantic":
     try:
         from agent_pydantic import run_agent

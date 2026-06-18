@@ -368,7 +368,7 @@ services:
     ports:
       - "9009:9000" # 9009 am Host (9000 ist von RAGFlows MinIO belegt)
     environment:
-      - AGENT_IMPL=${AGENT_IMPL:-langgraph} # "pydantic" oder "langgraph"
+      - AGENT_IMPL=${AGENT_IMPL:-pydantic} # "pydantic" (Tool-Calling, Default) oder "langgraph" (Critic-Loop)
       # Zentrales Logging: Agent-Module auf DEBUG (Default INFO). Leiser: AGENT_LOG_LEVEL=INFO
       - LOG_LEVEL=${AGENT_LOG_LEVEL:-DEBUG}
       # LLM
@@ -438,6 +438,9 @@ services:
     environment:
       - "OPENAI_API_BASE_URLS=http://vllm-main:5568/v1;http://vllm-helper:30001/v1;http://agent:9000/v1"
       - "OPENAI_API_KEYS=not-needed;not-needed;not-needed"
+      # research-agent = zentraler Assistent (RAG + Web-Gegenpruefung + Code):
+      # neue Chats waehlen ihn per Default. Roh-LLM "main"/Helper bleiben waehlbar.
+      - DEFAULT_MODELS=${DEFAULT_MODELS:-research-agent}
       - ENABLE_OLLAMA_API=false   # wir nutzen nur OpenAI-kompatibel (vLLM) -> kein Ollama-Polling/Connection-Error
       - WEBUI_AUTH=false
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}

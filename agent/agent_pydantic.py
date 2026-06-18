@@ -11,7 +11,13 @@ from dataclasses import dataclass
 import httpx
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIModel
+# pydantic-ai 1.x hat OpenAIModel -> OpenAIChatModel umbenannt (alter Name bleibt
+# eine Weile als Alias). Beide Faelle abfangen, damit der Tool-Calling-Pfad ueber
+# 1.x-Versionen hinweg zuverlaessig laedt (sonst stiller Fallback auf LangGraph).
+try:
+    from pydantic_ai.models.openai import OpenAIModel
+except ImportError:  # neuere 1.x
+    from pydantic_ai.models.openai import OpenAIChatModel as OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 import common as C

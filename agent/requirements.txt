@@ -5,10 +5,11 @@ uvicorn[standard]==0.34.0
 httpx==0.28.1
 openai==1.59.6
 
-# Variante 1: PydanticAI (OPTIONAL, nicht Default). Die 0.0.20 kennt
-#   'pydantic_ai.providers' NICHT -> fuer diese Variante auf 1.x heben:
-#   pip install -U 'pydantic-ai-slim[openai]'  (Code nutzt die 1.x-Provider-API).
-pydantic-ai-slim[openai]==0.0.20
+# Variante 1: PydanticAI = Tool-Calling-Agent (jetzt DEFAULT, AGENT_IMPL=pydantic).
+#   Braucht 1.x (die alte 0.0.20 kennt 'pydantic_ai.providers' nicht und fiele still
+#   auf LangGraph zurueck). Floor-Pin statt exaktem Patch, weil sich die 1.x-API
+#   schnell bewegt; agent_pydantic.py faengt den OpenAIModel/OpenAIChatModel-Rename ab.
+pydantic-ai-slim[openai]>=1.0,<2
 
 # Variante 2: LangGraph-Critic
 langgraph==0.2.62
