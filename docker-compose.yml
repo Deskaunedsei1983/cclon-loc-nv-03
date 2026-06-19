@@ -120,7 +120,13 @@ services:
     #                          Multi-Request-/VRAM-Ueberbelegung, "wie bisher")
     #  - Diffusion           : --override-generation-config max_new_tokens=null (Model-Card)
     #  - NVFP4 wird i.d.R. autom. erkannt; sonst  --quantization modelopt  ergaenzen.
-    # [VERIFY] HF-Repo-Name, gemma4-Parser und 256k gegen die Model-Card pruefen.
+    #  ENTFERNT: --default-chat-template-kwargs -> existiert in diesem vLLM-Build NICHT
+    #  (verifiziert gegen Commit ecf9d83, arg_utils.py) -> argparse-Crash beim Start;
+    #  "enable_thinking" ist zudem ein Qwen-, kein Gemma-Chat-Template-Feature.
+    # [VERIFY gegen das (gated) Modellcard, BEVOR main-gemma produktiv laeuft]: Repo-Name,
+    #  ob "gemma4" als reasoning-/tool-call-parser registriert ist, ob VLLM_USE_V2_MODEL_RUNNER
+    #  noetig ist (existiert, default off), korrektes Attention-Backend, und ob dieser
+    #  vLLM-Build dieses DIFFUSIONS-Modell ueberhaupt traegt (Standard-vLLM = autoregressiv).
     command: >
       nvidia/diffusiongemma-26B-A4B-IT-NVFP4
       --served-model-name gemma-main main
@@ -134,7 +140,6 @@ services:
       --tool-call-parser gemma4
       --reasoning-parser gemma4
       --override-generation-config '{"max_new_tokens":null}'
-      --default-chat-template-kwargs '{"enable_thinking":true}'
     networks:
       aistack-core:
         aliases:
