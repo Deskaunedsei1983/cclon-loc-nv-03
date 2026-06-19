@@ -369,6 +369,9 @@ services:
       - "9009:9000" # 9009 am Host (9000 ist von RAGFlows MinIO belegt)
     environment:
       - AGENT_IMPL=${AGENT_IMPL:-pydantic} # "pydantic" (Tool-Calling, Default) oder "langgraph" (Critic-Loop)
+      # Nur langgraph: deterministische Web-Gegenpruefung (Anzahl Pruef-Queries / Revise-Runden).
+      - VERIFY_MAX_QUERIES=${VERIFY_MAX_QUERIES:-3}
+      - VERIFY_MAX_ITER=${VERIFY_MAX_ITER:-3}
       # Zentrales Logging: Agent-Module auf DEBUG (Default INFO). Leiser: AGENT_LOG_LEVEL=INFO
       - LOG_LEVEL=${AGENT_LOG_LEVEL:-DEBUG}
       # LLM
