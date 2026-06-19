@@ -1,7 +1,7 @@
 """
 title: Ingest Router (RAGFlow/Morphik Auto-Weiche)
 author: local-ai-stack
-version: 0.1.0
+version: 0.2.0
 required_open_webui_version: 0.5.0
 description: >
   Schiebt im Chat HOCHGELADENE Dateien automatisch in die richtige Wissensbasis:
@@ -9,45 +9,137 @@ description: >
   sonst -> RAGFlow) und ingestiert. Danach findet der research-agent die Inhalte
   per RAG. Bricht NIE den Chat ab (Fehler werden nur geloggt/als Status gezeigt).
 
-  Installation: OWUI -> Admin -> Functions -> "+" -> Code einfuegen -> aktivieren,
-  global ODER dem Modell "research-agent" zuweisen. Dann in den Valves die
-  owui_api_key setzen (Settings -> Account -> API Keys), damit der Filter die
-  Datei-Bytes aus OWUI laden darf.
+  KEY-LOS: braucht KEINEN OWUI-API-Key. Datei-Bytes werden mehrstufig beschafft:
+    1) Bilder als data:-Base64 direkt aus der Nachricht (kein Fetch),
+    2) GET /api/v1/files/{id}/content OHNE Auth (geht, da WEBUI_AUTH=false),
+    3) prozess-intern via open_webui Files/Storage,
+    4) Fallback: der bereits extrahierte Text als .txt.
 
-  [VERIFY] Die Form von body["files"]/["metadata"]["files"] und der Datei-Download
-  (/api/v1/files/{id}/content) sind OWUI-versionsabhaengig -> bei Bedarf anpassen.
+  Installation: OWUI -> Admin -> Functions -> "+" -> Code einfuegen -> aktivieren,
+  global ODER dem Modell "research-agent" zuweisen. In den Valves ist nichts
+  Pflicht; 'owui_base_url' nur anpassen, falls OWUI nicht auf :8080 lauscht.
+
+  [VERIFY] Form von body["files"]/messages und /api/v1/files/{id}/content sind
+  OWUI-versionsabhaengig (hier: 0.9.5-Annahmen). Bei Bedarf anpassen.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("owui.ingest_router")
 
+# data:<mime>;base64,<payload>
+_MIME_EXT = {
+    "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp",
+    "image/gif": "gif", "image/tiff": "tiff", "image/bmp": "bmp", "image/heic": "heic",
+    "application/pdf": "pdf",
+}
 
-def _iter_files(body: dict):
-    """Alle Datei-Eintraege aus dem Request einsammeln (mehrere OWUI-Formen)."""
-    seen_local = []
-    cand = []
-    cand += body.get("files") or []
+
+def _decode_data_url(url: str):
+    """'data:image/png;base64,AAAA' -> (content_type, bytes) | (None, None)."""
+    try:
+        if not isinstance(url, str) or not url.startswith("data:") or "," not in url:
+            return None, None
+        header, payload = url.split(",", 1)
+        meta = header[5:]  # nach 'data:'
+        ctype = meta.split(";", 1)[0] or "application/octet-stream"
+        if "base64" not in meta:
+            return None, None
+        return ctype, base64.b64decode(payload)
+    except Exception:
+        return None, None
+
+
+def _ext_for(ctype: str) -> str:
+    return _MIME_EXT.get((ctype or "").lower(), "bin")
+
+
+def _collect(body: dict) -> list[dict]:
+    """Alle ingestierbaren Anhaenge einsammeln. Jedes Item:
+       {dedup, name, content_type, data?:bytes, fid?:str, text?:str}."""
+    items: list[dict] = []
+
+    # 1) Bilder als data:-URL direkt aus den Nachrichteninhalten (multimodal).
+    for msg in body.get("messages") or []:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "image_url":
+                continue
+            url = (part.get("image_url") or {}).get("url", "")
+            ctype, data = _decode_data_url(url)
+            if data:
+                h = hashlib.sha1(data).hexdigest()
+                items.append({"dedup": f"img:{h}", "name": f"upload_{h[:8]}.{_ext_for(ctype)}",
+                              "content_type": ctype, "data": data})
+
+    # 2) Datei-Deskriptoren (mehrere OWUI-Formen).
+    cand = list(body.get("files") or [])
     cand += (body.get("metadata") or {}).get("files") or []
     for msg in body.get("messages") or []:
         if isinstance(msg, dict):
             cand += msg.get("files") or []
+
     for f in cand:
         if not isinstance(f, dict):
             continue
         inner = f.get("file") if isinstance(f.get("file"), dict) else f
         fid = inner.get("id") or f.get("id")
-        if not fid:
-            continue
         meta = inner.get("meta") or {}
-        name = inner.get("filename") or inner.get("name") or meta.get("name") or f"{fid}"
+        name = inner.get("filename") or inner.get("name") or meta.get("name") or (fid or "datei")
         ctype = meta.get("content_type") or inner.get("content_type") or ""
-        seen_local.append({"id": fid, "name": name, "content_type": ctype})
-    return seen_local
+
+        # 2a) Inline-Base64 im Deskriptor (manche Versionen).
+        for maybe in (inner.get("url"), f.get("url"), inner.get("data")):
+            if isinstance(maybe, str) and maybe.startswith("data:"):
+                ct, data = _decode_data_url(maybe)
+                if data:
+                    h = hashlib.sha1(data).hexdigest()
+                    items.append({"dedup": f"sha:{h}", "name": name,
+                                  "content_type": ct or ctype, "data": data})
+                    break
+        else:
+            # 2b) Extrahierter Text als allerletzter Fallback.
+            data_field = inner.get("data")
+            text = data_field.get("content") if isinstance(data_field, dict) else None
+            if fid:
+                items.append({"dedup": f"id:{fid}", "name": name,
+                              "content_type": ctype, "fid": fid, "text": text})
+            elif text:
+                h = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
+                items.append({"dedup": f"txt:{h}", "name": name, "content_type": ctype,
+                              "text": text})
+    return items
+
+
+def _read_internal(fid: str):
+    """Prozess-interner Lesepfad ueber OWUIs eigene Module (kein HTTP, kein Key)."""
+    try:
+        from open_webui.models.files import Files
+
+        rec = Files.get_file_by_id(fid)
+        if not rec:
+            return None
+        path = getattr(rec, "path", None) or (getattr(rec, "meta", None) or {}).get("path")
+        if not path:
+            return None
+        try:
+            from open_webui.storage.provider import Storage
+
+            local = Storage.get_file(path)
+        except Exception:
+            local = path  # aeltere Versionen: path ist schon lokal
+        with open(local, "rb") as fh:
+            return fh.read()
+    except Exception:
+        return None
 
 
 class Filter:
@@ -58,77 +150,86 @@ class Filter:
             description="Basis-URL des ingest-router-Dienstes")
         owui_base_url: str = Field(
             default="http://localhost:8080",
-            description="OWUI-Basis-URL (intern), um Datei-Bytes zu laden")
-        owui_api_key: str = Field(
-            default="",
-            description="OWUI API-Key (Account -> API Keys) fuer den Datei-Download")
+            description="OWUI-Basis-URL (intern) fuer den key-losen Datei-GET")
         emit_status: bool = Field(
             default=True, description="Fortschritt als Status im Chat anzeigen")
 
     def __init__(self):
         self.valves = self.Valves()
-        self._seen: set[str] = set()  # bereits ingestierte File-IDs (pro Prozess)
+        self._seen: set[str] = set()  # bereits ingestierte Dateien (pro Prozess)
 
     async def _emit(self, emitter, text: str, done: bool = False):
         if emitter and self.valves.emit_status:
             try:
-                await emitter({"type": "status",
-                               "data": {"description": text, "done": done}})
+                await emitter({"type": "status", "data": {"description": text, "done": done}})
             except Exception:
                 pass
 
-    async def _download(self, session, fid: str) -> bytes | None:
+    async def _fetch_http(self, session, fid: str):
+        """GET /api/v1/files/{id}/content OHNE Auth (WEBUI_AUTH=false)."""
         url = f"{self.valves.owui_base_url.rstrip('/')}/api/v1/files/{fid}/content"
-        headers = {"Authorization": f"Bearer {self.valves.owui_api_key}"} \
-            if self.valves.owui_api_key else {}
-        async with session.get(url, headers=headers) as r:
-            if r.status != 200:
-                log.warning("ingest_router: Datei %s laden -> HTTP %s", fid, r.status)
-                return None
-            return await r.read()
+        try:
+            async with session.get(url) as r:
+                if r.status == 200:
+                    return await r.read()
+                log.warning("ingest_router: GET content %s -> HTTP %s", fid, r.status)
+        except Exception:
+            log.warning("ingest_router: GET content %s fehlgeschlagen", fid)
+        return None
 
-    async def _ingest_one(self, session, f: dict, emitter) -> None:
+    async def _resolve_bytes(self, session, item: dict):
+        """Bytes + content_type + name beschaffen; mehrstufig, key-los."""
+        if item.get("data") is not None:
+            return item["data"], item.get("content_type") or "application/octet-stream", item["name"]
+        if item.get("fid"):
+            data = await self._fetch_http(session, item["fid"]) or _read_internal(item["fid"])
+            if data is not None:
+                return data, item.get("content_type") or "application/octet-stream", item["name"]
+        if item.get("text"):
+            name = item["name"] if item["name"].lower().endswith(".txt") else item["name"] + ".txt"
+            return item["text"].encode("utf-8", "ignore"), "text/plain", name
+        return None, None, None
+
+    async def _ingest_one(self, session, item: dict, emitter) -> None:
         import aiohttp
 
-        fid = f["id"]
-        await self._emit(emitter, f"Klassifiziere & importiere '{f['name']}' …")
-        data = await self._download(session, fid)
+        data, ctype, name = await self._resolve_bytes(session, item)
         if data is None:
-            await self._emit(emitter, f"'{f['name']}': Download fehlgeschlagen "
-                                      f"(owui_api_key/owui_base_url pruefen)", done=True)
+            await self._emit(emitter, f"'{item['name']}': keine Datei-Bytes erreichbar "
+                                      f"(owui_base_url pruefen)", done=True)
             return
+        await self._emit(emitter, f"Klassifiziere & importiere '{name}' …")
         form = aiohttp.FormData()
-        form.add_field("file", data, filename=f["name"],
-                       content_type=f.get("content_type") or "application/octet-stream")
+        form.add_field("file", data, filename=name,
+                       content_type=ctype or "application/octet-stream")
         url = f"{self.valves.ingest_router_url.rstrip('/')}/ingest"
         async with session.post(url, data=form) as r:
             body = await r.json(content_type=None)
         if r.status == 200 and body.get("ok"):
-            tgt, reason = body.get("target"), body.get("reason", "")
-            await self._emit(emitter, f"'{f['name']}' -> {tgt} ({reason})", done=True)
-            log.info("ingest_router: %s -> %s | %s", f["name"], tgt, reason)
+            await self._emit(emitter, f"'{name}' -> {body.get('target')} ({body.get('reason','')})",
+                             done=True)
+            log.info("ingest_router: %s -> %s | %s", name, body.get("target"), body.get("reason"))
         else:
-            await self._emit(emitter, f"'{f['name']}': Import-Fehler "
-                                      f"({body.get('error','?')})", done=True)
-            log.error("ingest_router: %s -> Fehler %s", f["name"], body)
+            await self._emit(emitter, f"'{name}': Import-Fehler ({body.get('error','?')})", done=True)
+            log.error("ingest_router: %s -> Fehler %s", name, body)
 
     async def inlet(self, body: dict, __event_emitter__=None, **kwargs) -> dict:
         if not self.valves.enabled:
             return body
         try:
-            files = [f for f in _iter_files(body) if f["id"] not in self._seen]
-            if not files:
+            items = [it for it in _collect(body) if it["dedup"] not in self._seen]
+            if not items:
                 return body
             import aiohttp
 
             timeout = aiohttp.ClientTimeout(total=180)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                for f in files:
-                    self._seen.add(f["id"])  # vor dem Call markieren -> kein Doppel-Ingest
+                for it in items:
+                    self._seen.add(it["dedup"])  # vor dem Call markieren -> kein Doppel-Ingest
                     try:
-                        await self._ingest_one(session, f, __event_emitter__)
+                        await self._ingest_one(session, it, __event_emitter__)
                     except Exception:
-                        log.exception("ingest_router: Ingest von %s fehlgeschlagen", f["name"])
+                        log.exception("ingest_router: Ingest von %s fehlgeschlagen", it.get("name"))
         except Exception:
             # Niemals den Chat blockieren, egal was schiefgeht.
             log.exception("ingest_router: inlet uebersprungen (Fehler)")

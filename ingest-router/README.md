@@ -48,9 +48,11 @@ SPREADSHEET_TO_MORPHIK=true
 1. OWUI → **Admin → Functions → „+"** → Inhalt von
    `open-webui/filters/ingest_router.py` einfügen → speichern → **aktivieren**.
 2. Global oder dem Modell **`research-agent`** zuweisen (Globe-Icon).
-3. In den **Valves** den `owui_api_key` setzen (OWUI → *Account → API Keys*),
-   damit der Filter die Datei-Bytes aus OWUI laden darf. `ingest_router_url`
-   bleibt `http://ingest-router:8000`.
+3. Fertig — **kein API-Key nötig**. Der Filter beschafft die Datei-Bytes key-los
+   (Bilder als Base64 aus der Nachricht; Dokumente via `GET /files/{id}/content`
+   ohne Auth, da `WEBUI_AUTH=false`; Fallbacks prozess-intern bzw. extrahierter
+   Text). In den Valves ist nichts Pflicht; `owui_base_url` nur ändern, falls OWUI
+   nicht auf `:8080` lauscht, `ingest_router_url` bleibt `http://ingest-router:8000`.
 
 ## Testen ohne OWUI
 ```bash
@@ -67,6 +69,8 @@ curl -s http://localhost:9010/healthz | jq
   deine RAGFlow-Version prüfen (gleiche [VERIFY]-Lage wie das Retrieval im Agent).
 - **Morphik-Ingest** (`app.py:_to_morphik`): `POST /ingest/file` (multipart `file` +
   `metadata`). Endpoint/Felder gegen deine Morphik-Version prüfen.
-- **OWUI-Datei-Body & Download** (`ingest_router.py`): Form von
-  `body["files"]`/`metadata.files` und `/api/v1/files/{id}/content` sind OWUI-
-  versionsabhängig (hier: 0.9.5-Annahmen).
+- **OWUI-Datei-Body & key-loser Download** (`ingest_router.py`): Form von
+  `body["files"]`/`messages` und `/api/v1/files/{id}/content` sind OWUI-
+  versionsabhängig (hier: 0.9.5-Annahmen). Der no-auth-GET setzt `WEBUI_AUTH=false`
+  voraus; läuft OWUI mit Auth, greift der prozess-interne Fallback (`open_webui`
+  Files/Storage) bzw. der extrahierte Text.
