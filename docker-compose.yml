@@ -470,10 +470,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - "OPENAI_API_BASE_URLS=http://vllm-main:5568/v1;http://vllm-helper:30001/v1;http://agent:9000/v1"
-      - "OPENAI_API_KEYS=not-needed;not-needed;not-needed"
+      # EIN Nutzer-Modell: NUR der research-agent (komplette Kette) wird als
+      # OWUI-Chat-Modell exponiert. Das rohe Hauptmodell (main/gemma-main) wird
+      # NICHT mehr verbunden -> es verschwindet aus dem Auswahlmenue (der Agent
+      # spricht vllm-main intern direkt an, OWUI braucht es dafuer nicht). Der
+      # Helfer bleibt NUR als Hintergrund-Task-Modell (Titel/Tags/Suchqueries),
+      # nicht zum Chatten -> in Admin -> Settings -> Models ausblenden (1 Klick).
+      - "OPENAI_API_BASE_URLS=http://agent:9000/v1;http://vllm-helper:30001/v1"
+      - "OPENAI_API_KEYS=not-needed;not-needed"
       # research-agent = zentraler Assistent (RAG + Web-Gegenpruefung + Code):
-      # neue Chats waehlen ihn per Default. Roh-LLM "main"/Helper bleiben waehlbar.
+      # neue Chats waehlen ihn per Default.
       - DEFAULT_MODELS=${DEFAULT_MODELS:-research-agent}
       - ENABLE_OLLAMA_API=false   # wir nutzen nur OpenAI-kompatibel (vLLM) -> kein Ollama-Polling/Connection-Error
       - WEBUI_AUTH=false
