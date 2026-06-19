@@ -1,27 +1,34 @@
-# morphik.toml — Morphik an den LOKALEN vLLM-Stack angebunden, ColPali aktiv.
-# Wird nach /app/morphik.toml gemountet (siehe docker-compose, morphik-Service).
-#
-# Kerngedanke: Morphik braucht KEINE Cloud-Modelle. Es nutzt unsere bestehenden
-# vLLM-Dienste ueber litellm (OpenAI-kompatibel). ColPali (visuelles Late-
-# Interaction-RAG) laedt Morphik als lokales Modell selbst -> laeuft auf der GPU.
-#
-# [VERIFY] Das TOML-Schema ist morphik-core-versionsabhaengig. Startet Morphik
-# nicht, den Default aus dem Image ziehen und angleichen:
-#   docker run --rm ghcr.io/morphik-org/morphik-core:latest cat /app/morphik.toml
+# morphik.toml — kanonische Default-Struktur (morphik-core 1.0.3), angebunden an
+# den LOKALEN vLLM-Stack. NUR diese Stellen weichen vom Upstream-Default ab:
+#   - [registered_models] -> unsere vLLMs (vllm_main, vllm_embed) statt OpenAI/Ollama
+#   - [completion]/[embedding]/[parser]/[document_analysis]/[parser.vision] -> diese
+#   - [embedding].dimensions = 4096 (Qwen3-Embedding-8B)
+#   - [redis].url -> redis://redis:6379/0 (Compose-Alias)
+#   - [auth].bypass_auth_mode = true (lokal; JWT-Pruefung aus)
+#   - [morphik].enable_colpali = true, colpali_mode/parser_mode = local
+# Gemountet nach /app/morphik.toml. [VERIFY] gegen die genutzte Version.
 
 [api]
 host = "0.0.0.0"
 port = 8000
 reload = false
 
+[service]
+environment = "development"  # "development", "staging", or "production"
+version = "unknown"
+enable_profiling = false
+
 [auth]
 jwt_algorithm = "HS256"
-# Token kommt signiert von agent/ingest-router (JWT_SECRET_KEY == WEBUI_SECRET_KEY).
+bypass_auth_mode = true   # lokal: keine JWT-Pruefung (agent/ingest-router-Token egal)
+dev_user_id = "dev_user"
 
+#### Registered models -> litellm spricht unsere lokalen vLLMs OpenAI-kompatibel an
 [registered_models]
-# OpenAI-kompatibel via litellm -> zeigt auf unsere vLLMs (kein externer Call).
 vllm_main  = { model_name = "openai/main",        api_base = "http://vllm-main:5568/v1",  api_key = "not-needed" }
 vllm_embed = { model_name = "openai/qwen3-embed", api_base = "http://vllm-embed:8091/v1", api_key = "not-needed" }
+
+#### Component configurations ####
 
 [completion]
 model = "vllm_main"
@@ -30,6 +37,13 @@ default_temperature = 0.3
 
 [database]
 provider = "postgres"
+pool_size = 10
+max_overflow = 15
+pool_recycle = 3600
+pool_timeout = 10
+pool_pre_ping = true
+max_retries = 3
+retry_delay = 1.0
 
 [embedding]
 model = "vllm_embed"
@@ -37,29 +51,71 @@ dimensions = 4096            # Qwen3-Embedding-8B liefert 4096-dim Vektoren
 similarity_metric = "cosine"
 
 [parser]
-chunk_size = "6000"
-chunk_overlap = "300"
-use_unstructured_api = "false"
-use_contextual_chunking = "false"
+chunk_size = 6000
+chunk_overlap = 300
+use_contextual_chunking = false
+contextual_chunking_model = "vllm_main"
+
+[parser.xml]
+max_tokens = 350
+preferred_unit_tags = ["SECTION", "Section", "Article", "clause"]
+ignore_tags = ["TOC", "INDEX"]
+
+[document_analysis]
+model = "vllm_main"
 
 [parser.vision]
 model = "vllm_main"
-frame_sample_rate = "-1"     # kein Video-Frame-Sampling
+frame_sample_rate = -1  # -1 = kein Frame-Captioning (spart Vision-Calls)
 
 [reranker]
-use_reranker = "false"
+use_reranker = false
+provider = "flag"
+model_name = "BAAI/bge-reranker-large"
+query_max_length = 256
+passage_max_length = 512
+use_fp16 = true
+device = "cpu"  # Reranker ist aus; bei Aktivierung "cuda" setzen
 
-[morphik]
-enable_colpali = true        # visuelles RAG fuer Bilder/Scans/Tabellen (lokales ColPali-Modell, GPU)
-mode = "self_hosted"
+[storage]
+provider = "local"
+storage_path = "./storage"
+cache_enabled = false
+cache_max_size_gb = 10
+s3_upload_concurrency = 16
 
-[graph]
-model = "vllm_main"
-enable_entity_resolution = false
+[vector_store]
+provider = "pgvector"
+
+[multivector_store]
+provider = "postgres"  # ColPali-Multivektoren in Postgres
 
 [redis]
+url = "redis://redis:6379/0"  # Compose-Alias (hat Vorrang vor host/port)
 host = "redis"
 port = 6379
 
+[worker]
+arq_max_jobs = 1
+colpali_store_batch_size = 16
+
+[pdf]
+colpali_pdf_dpi = 150
+
+[morphik]
+enable_colpali = true
+mode = "self_hosted"
+secret_manager = "env"
+api_domain = "api.morphik.ai"
+morphik_embedding_api_domain = ["http://localhost:6000"]
+colpali_mode = "local"   # ColPali laeuft lokal auf der GPU
+parser_mode = "local"
+
+[pdf_viewer]
+frontend_url = "http://localhost:3000/api/pdf"
+
 [telemetry]
-enabled = false
+service_name = "databridge-core"
+project_name = ""
+upload_interval_hours = 4.0
+max_local_bytes = 1073741824

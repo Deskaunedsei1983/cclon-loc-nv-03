@@ -666,6 +666,8 @@ services:
       - JWT_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
       # ColPali laeuft lokal auf der GPU -> HF-Cache/Token wie bei den vLLMs:
       - HF_TOKEN=${HF_TOKEN:-}
+      # Air-Gap: keine Telemetrie nach draussen (best-effort; [VERIFY] Env-Name).
+      - TELEMETRY_ENABLED=false
     volumes:
       # Lokale Anbindung (Modelle/ColPali) + Persistenz.
       # [VERIFY] Pfade /app/morphik.toml und /app/storage gegen das Image pruefen.
