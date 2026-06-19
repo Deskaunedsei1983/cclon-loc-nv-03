@@ -659,10 +659,26 @@ services:
       - PGPASSWORD=${MORPHIK_DB_PASSWORD:-bitte-aendern} # <--- DIESE ZEILE UNBEDINGT ERGÄNZEN
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      # Morphik kann Embeddings/Completions lokal beziehen (in morphik.toml konfigurieren):
+      # Modelle stehen in morphik.toml (zeigt auf vllm-main + vllm-embed).
+      # Diese OPENAI_*-Defaults bleiben nur als litellm-Fallback:
       - OPENAI_BASE_URL=http://vllm-main:5568/v1
       - OPENAI_API_KEY=not-needed
       - JWT_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
+      # ColPali laeuft lokal auf der GPU -> HF-Cache/Token wie bei den vLLMs:
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      # Lokale Anbindung (Modelle/ColPali) + Persistenz.
+      # [VERIFY] Pfade /app/morphik.toml und /app/storage gegen das Image pruefen.
+      - ./morphik/morphik.toml:/app/morphik.toml:ro
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - morphik-storage:/app/storage
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
       - aistack-core
     depends_on:
@@ -676,6 +692,7 @@ volumes:
   open-webui-data:
   ocu-pg-data:
   morphik-pg-data:
+  morphik-storage:
 
 networks:
   # Eigene, von DIESEM Compose erzeugte Netze:

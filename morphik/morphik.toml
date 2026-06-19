@@ -1,0 +1,65 @@
+# morphik.toml — Morphik an den LOKALEN vLLM-Stack angebunden, ColPali aktiv.
+# Wird nach /app/morphik.toml gemountet (siehe docker-compose, morphik-Service).
+#
+# Kerngedanke: Morphik braucht KEINE Cloud-Modelle. Es nutzt unsere bestehenden
+# vLLM-Dienste ueber litellm (OpenAI-kompatibel). ColPali (visuelles Late-
+# Interaction-RAG) laedt Morphik als lokales Modell selbst -> laeuft auf der GPU.
+#
+# [VERIFY] Das TOML-Schema ist morphik-core-versionsabhaengig. Startet Morphik
+# nicht, den Default aus dem Image ziehen und angleichen:
+#   docker run --rm ghcr.io/morphik-org/morphik-core:latest cat /app/morphik.toml
+
+[api]
+host = "0.0.0.0"
+port = 8000
+reload = false
+
+[auth]
+jwt_algorithm = "HS256"
+# Token kommt signiert von agent/ingest-router (JWT_SECRET_KEY == WEBUI_SECRET_KEY).
+
+[registered_models]
+# OpenAI-kompatibel via litellm -> zeigt auf unsere vLLMs (kein externer Call).
+vllm_main  = { model_name = "openai/main",        api_base = "http://vllm-main:5568/v1",  api_key = "not-needed" }
+vllm_embed = { model_name = "openai/qwen3-embed", api_base = "http://vllm-embed:8091/v1", api_key = "not-needed" }
+
+[completion]
+model = "vllm_main"
+default_max_tokens = "1000"
+default_temperature = 0.3
+
+[database]
+provider = "postgres"
+
+[embedding]
+model = "vllm_embed"
+dimensions = 4096            # Qwen3-Embedding-8B liefert 4096-dim Vektoren
+similarity_metric = "cosine"
+
+[parser]
+chunk_size = "6000"
+chunk_overlap = "300"
+use_unstructured_api = "false"
+use_contextual_chunking = "false"
+
+[parser.vision]
+model = "vllm_main"
+frame_sample_rate = "-1"     # kein Video-Frame-Sampling
+
+[reranker]
+use_reranker = "false"
+
+[morphik]
+enable_colpali = true        # visuelles RAG fuer Bilder/Scans/Tabellen (lokales ColPali-Modell, GPU)
+mode = "self_hosted"
+
+[graph]
+model = "vllm_main"
+enable_entity_resolution = false
+
+[redis]
+host = "redis"
+port = 6379
+
+[telemetry]
+enabled = false
