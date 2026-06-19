@@ -141,9 +141,12 @@ services:
           - vllm-main
 
   # ===================== 2) HELFER-LLM (kleine Tasks) =======================
+  #  OPTIONAL: nur aktiv, wenn "helper" in COMPOSE_PROFILES steht. Abschalten zum
+  #  VRAM-Sparen -> ",helper" entfernen + die OWUI_*-Schalter in der .env (siehe dort).
   vllm-helper:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly} # Tag via .env -> VLLM_IMAGE
     container_name: vllm_helper
+    profiles: ["helper"]
     restart: unless-stopped
     ipc: host
     shm_size: "4gb"
@@ -483,8 +486,10 @@ services:
       # spricht vllm-main intern direkt an, OWUI braucht es dafuer nicht). Der
       # Helfer bleibt NUR als Hintergrund-Task-Modell (Titel/Tags/Suchqueries),
       # nicht zum Chatten -> in Admin -> Settings -> Models ausblenden (1 Klick).
-      - "OPENAI_API_BASE_URLS=http://agent:9000/v1;http://vllm-helper:30001/v1"
-      - "OPENAI_API_KEYS=not-needed;not-needed"
+      # Helfer abschaltbar: bei "Helfer aus" in der .env auf "http://agent:9000/v1"
+      # (nur der Agent) setzen, sonst zeigt OWUI einen toten vllm-helper-Connector.
+      - "OPENAI_API_BASE_URLS=${OWUI_OPENAI_API_BASE_URLS:-http://agent:9000/v1;http://vllm-helper:30001/v1}"
+      - "OPENAI_API_KEYS=${OWUI_OPENAI_API_KEYS:-not-needed;not-needed}"
       # research-agent = zentraler Assistent (RAG + Web-Gegenpruefung + Code):
       # neue Chats waehlen ihn per Default.
       - DEFAULT_MODELS=${DEFAULT_MODELS:-research-agent}
@@ -512,15 +517,21 @@ services:
       - WEB_SEARCH_CONCURRENT_REQUESTS=1 # Burst minimieren -> Engines werden seltener CAPTCHA-gesperrt
       # KURZE Suchqueries aus dem Prompt bauen (statt 50-Wort-Prompt = Bot-Trigger).
       # vLLM ist OpenAI-kompatibel -> OWUI behandelt die Modelle als "external":
-      - ENABLE_SEARCH_QUERY_GENERATION=true
-      - TASK_MODEL_EXTERNAL=qwen-helper # leichter Helper baut Titel/Tags/Suchqueries (kein Reasoning-Leak)
-      - TASK_MODEL=qwen-helper
+      # Task-Generierung (Titel/Tags/Suchqueries/Folgefragen) laeuft auf dem Helfer.
+      # Helfer aus -> OWUI_ENABLE_TASKS=false in der .env: dann KEIN Task-Modell-Call
+      # (sonst wuerde OWUI den schweren Agenten fuer Titel missbrauchen). main/embed
+      # bleiben unangetastet.
+      - ENABLE_SEARCH_QUERY_GENERATION=${OWUI_ENABLE_TASKS:-true}
+      - ENABLE_TITLE_GENERATION=${OWUI_ENABLE_TASKS:-true}
+      - ENABLE_TAGS_GENERATION=${OWUI_ENABLE_TASKS:-true}
+      - TASK_MODEL_EXTERNAL=${OWUI_TASK_MODEL:-qwen-helper} # leichter Helper baut Titel/Tags/Suchqueries
+      - TASK_MODEL=${OWUI_TASK_MODEL:-qwen-helper}
       # Folgefrage-/Autocomplete-Vorschlaege AN (laufen ueber den Helfer, bestaetigt
       # via /metrics). HINWEIS: OWUI resendet dafuer die letzten Nachrichten inkl. der
       # Web-Inhalte ans Task-Modell (#15081) -> bei sehr grossen Seiten kann der Helfer
       # (32k Kontext) truncaten. Qualitaet der Vorschlaege haengt am Task-Modell (4B).
-      - ENABLE_FOLLOW_UP_GENERATION=true
-      - ENABLE_AUTOCOMPLETE_GENERATION=true
+      - ENABLE_FOLLOW_UP_GENERATION=${OWUI_ENABLE_TASKS:-true}
+      - ENABLE_AUTOCOMPLETE_GENERATION=${OWUI_ENABLE_TASKS:-true}
       # TIEFE Inhalte: OWUI laedt die Treffer ueber 'browserless' (Headless-Chromium,
       # rendert JS) -> echte Tabellen/Zahlen statt leerer HTML-Huelsen. Versions-
       # tolerant (CDP) -> bricht NICHT wie das mcr-Playwright. browserless laedt nur
