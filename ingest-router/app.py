@@ -173,6 +173,12 @@ async def _to_ragflow(http: httpx.AsyncClient, filename: str, content_type: str,
             "document_ids": doc_ids, "parse": parse_status}
 
 
+# Felder, die Morphik selbst verwaltet und im Ingest-Metadata mit 400 ablehnt
+# ("... are managed by Morphik and cannot be set during ingest").
+_MORPHIK_MANAGED = {"filename", "content_type", "external_id", "storage_info",
+                    "storage_files", "write_at", "app_id"}
+
+
 def _morphik_headers() -> dict:
     """Bearer-Header fuer Morphik: bevorzugt selbst signierter HS256-JWT (Dev-Token),
     weil Morphik einen JWT erwartet (roher Key -> 401 'Not enough segments').
@@ -202,7 +208,10 @@ async def _to_morphik(http: httpx.AsyncClient, filename: str, content_type: str,
         return {"ok": False, "error": "Morphik nicht konfiguriert (MORPHIK_API_URL fehlt)"}
     headers = _morphik_headers()
     files = {"file": (filename, data, content_type or "application/octet-stream")}
-    form = {"metadata": json.dumps(metadata or {})}
+    # Von Morphik verwaltete Felder herausfiltern (sonst 400). Den Dateinamen
+    # liefert bereits der multipart-Teil; eigene Kopie steht unter original_filename.
+    clean_meta = {k: v for k, v in (metadata or {}).items() if k not in _MORPHIK_MANAGED}
+    form = {"metadata": json.dumps(clean_meta)}
     r = await http.post(f"{MORPHIK_API_URL}/ingest/file", headers=headers,
                         files=files, data=form, timeout=120.0)
     r.raise_for_status()
@@ -252,7 +261,7 @@ async def ingest(file: UploadFile = File(...), metadata: str = Form("{}")):
     except Exception:
         meta = {}
     meta.setdefault("source", "open-webui")
-    meta.setdefault("filename", filename)
+    meta.setdefault("original_filename", filename)  # 'filename' ist bei Morphik reserviert
 
     async with httpx.AsyncClient() as http:
         try:
