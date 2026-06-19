@@ -7,3 +7,5 @@ python-multipart==0.0.20
 # den Tabellen-Check (Textdichte bleibt). Bewusst schlank, kein GPU.
 pypdf==5.1.0
 pdfplumber==0.11.4
+# Morphik-Auth: selbst signierter HS256-JWT (sonst 401 "Not enough segments")
+PyJWT==2.10.1

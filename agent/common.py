@@ -48,6 +48,11 @@ RAGFLOW_DATASET_IDS = [s for s in os.environ.get("RAGFLOW_DATASET_IDS", "").spli
 
 MORPHIK_API_URL = os.environ.get("MORPHIK_API_URL", "").rstrip("/")
 MORPHIK_API_KEY = os.environ.get("MORPHIK_API_KEY", "")
+# Morphik verlangt einen HS256-JWT (signiert mit JWT_SECRET_KEY == WEBUI_SECRET_KEY);
+# ein roher Key fuehrt zu 401 "Not enough segments". Wir erzeugen den Token selbst.
+MORPHIK_JWT_SECRET = os.environ.get("MORPHIK_JWT_SECRET", "")
+MORPHIK_ENTITY_ID = os.environ.get("MORPHIK_ENTITY_ID", "agent")
+MORPHIK_JWT_TTL = int(os.environ.get("MORPHIK_JWT_TTL", "86400"))
 
 SEARCH_URL = os.environ.get("SEARCH_URL", "http://presidio-proxy:8080/search")
 SANDBOX_RUN_URL = os.environ.get("SANDBOX_RUN_URL", "http://code-sandbox:8000/run")
@@ -176,13 +181,35 @@ async def t_retrieve_documents(http: httpx.AsyncClient, query: str) -> str:
         return f"Retrieval-Fehler: {e}"
 
 
+def morphik_auth_header() -> dict:
+    """Bearer-Header fuer Morphik. Bevorzugt einen selbst signierten HS256-JWT
+    (Dev-Token: type=developer, permissions read/write/admin), weil Morphik einen
+    JWT erwartet — ein roher Key ergibt 401 'Not enough segments'.
+    [VERIFY] Claims/Algorithmus gegen deine Morphik-Version pruefen."""
+    if MORPHIK_JWT_SECRET:
+        try:
+            import time
+            import jwt  # PyJWT
+            token = jwt.encode(
+                {"type": "developer", "entity_id": MORPHIK_ENTITY_ID,
+                 "permissions": ["read", "write", "admin"],
+                 "exp": int(time.time()) + MORPHIK_JWT_TTL},
+                MORPHIK_JWT_SECRET, algorithm="HS256")
+            return {"Authorization": f"Bearer {token}"}
+        except Exception:
+            log.exception("Morphik-JWT-Erzeugung fehlgeschlagen -> Fallback")
+    if MORPHIK_API_KEY:
+        return {"Authorization": f"Bearer {MORPHIK_API_KEY}"}
+    return {}
+
+
 async def t_retrieve_multimodal(http: httpx.AsyncClient, query: str) -> str:
     """Morphik-Retrieval fuer bild-/tabellenlastige Dokumente (optional)."""
     if not MORPHIK_API_URL:
         return "Morphik nicht konfiguriert."
     # [VERIFY] Morphik-Endpoint/Payload gegen deine Version pruefen.
     url = f"{MORPHIK_API_URL}/retrieve/chunks"
-    headers = {"Authorization": f"Bearer {MORPHIK_API_KEY}"} if MORPHIK_API_KEY else {}
+    headers = morphik_auth_header()
     try:
         r = await http.post(url, json={"query": query, "k": 6}, headers=headers, timeout=40.0)
         r.raise_for_status()

@@ -395,6 +395,10 @@ services:
       # Morphik (optional, nur mit --profile morphik aktiv)
       - MORPHIK_API_URL=${MORPHIK_API_URL:-}
       - MORPHIK_API_KEY=${MORPHIK_API_KEY:-}
+      # Morphik-Auth: HS256-JWT, signiert mit demselben Secret wie der morphik-Dienst
+      # (JWT_SECRET_KEY == WEBUI_SECRET_KEY). Behebt 401 "Not enough segments".
+      - MORPHIK_JWT_SECRET=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
+      - MORPHIK_ENTITY_ID=agent
       # Maskierte Suche + Sandbox
       - SEARCH_URL=http://presidio-proxy:8080/search
       - SANDBOX_RUN_URL=http://code-sandbox:8000/run
@@ -431,6 +435,9 @@ services:
       # Morphik (Bild/Tabelle-Ziel) — nur mit --profile morphik aktiv:
       - MORPHIK_API_URL=${MORPHIK_API_URL:-}
       - MORPHIK_API_KEY=${MORPHIK_API_KEY:-}
+      # Morphik-Auth: HS256-JWT mit demselben Secret wie der morphik-Dienst:
+      - MORPHIK_JWT_SECRET=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
+      - MORPHIK_ENTITY_ID=ingest-router
       # Klassifikations-Stellschrauben:
       - PDF_TEXT_MIN_CHARS_PER_PAGE=${PDF_TEXT_MIN_CHARS_PER_PAGE:-200}
       - PDF_TABLE_PAGE_RATIO=${PDF_TABLE_PAGE_RATIO:-0.34}

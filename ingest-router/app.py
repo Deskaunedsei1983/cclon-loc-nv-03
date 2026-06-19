@@ -44,6 +44,11 @@ RAGFLOW_INGEST_DATASET_ID = os.environ.get("RAGFLOW_INGEST_DATASET_ID", "").stri
 
 MORPHIK_API_URL = os.environ.get("MORPHIK_API_URL", "").rstrip("/")
 MORPHIK_API_KEY = os.environ.get("MORPHIK_API_KEY", "")
+# Morphik erwartet einen HS256-JWT (signiert mit JWT_SECRET_KEY == WEBUI_SECRET_KEY).
+# Ein roher Key ergibt 401 "Not enough segments" -> Token selbst erzeugen.
+MORPHIK_JWT_SECRET = os.environ.get("MORPHIK_JWT_SECRET", "")
+MORPHIK_ENTITY_ID = os.environ.get("MORPHIK_ENTITY_ID", "ingest-router")
+MORPHIK_JWT_TTL = int(os.environ.get("MORPHIK_JWT_TTL", "86400"))
 
 # --- Klassifikations-Stellschrauben (ENV) -----------------------------------
 # PDF mit weniger als X extrahierten Zeichen/Seite gilt als Scan/Bild -> Morphik.
@@ -168,13 +173,34 @@ async def _to_ragflow(http: httpx.AsyncClient, filename: str, content_type: str,
             "document_ids": doc_ids, "parse": parse_status}
 
 
+def _morphik_headers() -> dict:
+    """Bearer-Header fuer Morphik: bevorzugt selbst signierter HS256-JWT (Dev-Token),
+    weil Morphik einen JWT erwartet (roher Key -> 401 'Not enough segments').
+    [VERIFY] Claims/Algorithmus gegen deine Morphik-Version pruefen."""
+    if MORPHIK_JWT_SECRET:
+        try:
+            import time
+            import jwt  # PyJWT
+            token = jwt.encode(
+                {"type": "developer", "entity_id": MORPHIK_ENTITY_ID,
+                 "permissions": ["read", "write", "admin"],
+                 "exp": int(time.time()) + MORPHIK_JWT_TTL},
+                MORPHIK_JWT_SECRET, algorithm="HS256")
+            return {"Authorization": f"Bearer {token}"}
+        except Exception:
+            log.exception("Morphik-JWT-Erzeugung fehlgeschlagen -> Fallback")
+    if MORPHIK_API_KEY:
+        return {"Authorization": f"Bearer {MORPHIK_API_KEY}"}
+    return {}
+
+
 async def _to_morphik(http: httpx.AsyncClient, filename: str, content_type: str, data: bytes,
                       metadata: dict | None) -> dict:
     """[VERIFY] Morphik-API: POST /ingest/file (multipart 'file' + 'metadata' JSON).
        Endpoint/Feldnamen gegen deine Morphik-Version pruefen."""
     if not MORPHIK_API_URL:
         return {"ok": False, "error": "Morphik nicht konfiguriert (MORPHIK_API_URL fehlt)"}
-    headers = {"Authorization": f"Bearer {MORPHIK_API_KEY}"} if MORPHIK_API_KEY else {}
+    headers = _morphik_headers()
     files = {"file": (filename, data, content_type or "application/octet-stream")}
     form = {"metadata": json.dumps(metadata or {})}
     r = await http.post(f"{MORPHIK_API_URL}/ingest/file", headers=headers,
