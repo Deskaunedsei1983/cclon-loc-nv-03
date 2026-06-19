@@ -3,7 +3,9 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 httpx==0.28.1
-openai==1.59.6
+# pydantic-ai 1.x verlangt openai>=1.99.9; langchain-openai/mem0ai deckeln <2.0.0
+# -> gemeinsame Schnittmenge [1.99.9, 2.0). Frueher 1.59.6 -> ResolutionImpossible.
+openai>=1.99.9,<2
 
 # Variante 1: PydanticAI = Tool-Calling-Agent (jetzt DEFAULT, AGENT_IMPL=pydantic).
 #   Braucht 1.x (die alte 0.0.20 kennt 'pydantic_ai.providers' nicht und fiele still
