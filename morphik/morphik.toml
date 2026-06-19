@@ -47,7 +47,7 @@ retry_delay = 1.0
 
 [embedding]
 model = "vllm_embed"
-dimensions = 4096            # Qwen3-Embedding-8B liefert 4096-dim Vektoren
+dimensions = 2560            # MUSS zu EMBED_MODEL passen: 4B=2560, 8B=4096
 similarity_metric = "cosine"
 
 [parser]

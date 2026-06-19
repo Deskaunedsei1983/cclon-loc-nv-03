@@ -110,7 +110,56 @@ if [ "${#PROFILE_ARGS[@]}" -gt 0 ]; then
   echo "   + Upgrade-Overlay aktiv: ${PROFILES[*]}"
   COMPOSE_FILES+=(-f docker-compose.upgrades.yml)
 fi
-main_up() { docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" up -d --build; }
+dc() { docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" "$@"; }
+main_up() { dc up -d --build; }
+
+# --- Serielles GPU-Modell-Laden (gegen OOM durch gestapelte Lade-Peaks) -------
+#  vLLM laedt bei Online-Quantisierung zuerst die FP16-Gewichte -> kurzer VRAM-
+#  Peak, DANN wird quantisiert (kleiner). Starten alle GPU-Dienste gleichzeitig,
+#  stapeln sich diese Peaks -> OOM beim Init, obwohl der Dauerzustand passt.
+#  Loesung: nacheinander hochfahren, jeder erst wenn der vorige /health meldet
+#  (= fertig geladen + quantisiert). Abschalten:  SERIAL_GPU_LOAD=0 ./start.sh
+SERIAL_GPU_LOAD="${SERIAL_GPU_LOAD:-1}"
+
+http_ok() {  # 200-Check, tolerant ggue. fehlendem curl
+  if   command -v curl >/dev/null 2>&1; then curl -fsS -o /dev/null "$1" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then wget -q -O /dev/null "$1" 2>/dev/null
+  else python3 -c "import sys,urllib.request; urllib.request.urlopen(sys.argv[1],timeout=5)" "$1" 2>/dev/null
+  fi
+}
+
+wait_health() {  # wait_health <url> <name> <max_min>
+  local url="$1" name="$2" max="${3:-20}"; local tries=$(( max * 4 )) i=0
+  echo "   ... warte auf $name ($url) bis zu ${max} min"
+  until http_ok "$url"; do
+    i=$((i+1))
+    if [ "$i" -ge "$tries" ]; then
+      echo "   ! $name nach ${max} min nicht bereit -> fahre trotzdem fort"; return 1
+    fi
+    sleep 15
+  done
+  echo "   + $name bereit."
+}
+
+if [ "$SERIAL_GPU_LOAD" = "1" ]; then
+  echo ">> Serielles GPU-Laden AN (kein gestapelter Lade-Peak). Aus: SERIAL_GPU_LOAD=0 ./start.sh"
+  MAIN_SVC="vllm-main"; [ "$has_gemma" = 1 ] && MAIN_SVC="vllm-main-gemma"
+  echo ">> [seriell 1/4] Hauptmodell ($MAIN_SVC)"
+  retry 3 dc up -d --no-deps "$MAIN_SVC";  wait_health "http://localhost:5568/health" "vLLM main" 30
+  echo ">> [seriell 2/4] Mem0-Embedder (TEI bge-m3)"
+  retry 3 dc up -d --no-deps embeddings;   wait_health "http://localhost:8082/health" "TEI bge-m3" 15
+  echo ">> [seriell 3/4] RAGFlow/Morphik-Embedder (vllm-embed)"
+  retry 3 dc up -d --no-deps vllm-embed;   wait_health "http://localhost:8091/health" "vLLM embed" 20
+  case ",$ENV_PROFILES," in
+    *,helper,*)
+      echo ">> [seriell 4/4] Helfer (vllm-helper)"
+      retry 3 dc --profile helper up -d --no-deps vllm-helper
+      wait_health "http://localhost:30001/health" "vLLM helper" 15 ;;
+    *) echo "   (Helfer aus -> uebersprungen)";;
+  esac
+  echo ">> GPU-Modelle geladen -> jetzt den Rest (morphik/ColPali laedt nun allein)"
+fi
+
 retry 3 main_up
 
 echo "================================================================"
