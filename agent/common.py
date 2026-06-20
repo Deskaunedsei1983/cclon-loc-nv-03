@@ -67,6 +67,49 @@ SEARCH_URL = os.environ.get("SEARCH_URL", "http://presidio-proxy:8080/search")
 # Wie viele Web-Treffer der Agent AUSWERTET (mehr Quellen -> Beleg-Quoten zaehlbar).
 # Die SearXNG-Engines selbst NICHT anfassen; das hier ist rein agentseitig.
 WEB_MAX_RESULTS = int(os.environ.get("WEB_MAX_RESULTS", "12"))
+
+# --- Domain-Vertrauensliste (gewichtete Web-Quoten) -------------------------
+# Hauptliste: Datei (gemountet, live pflegbar). .env ergaenzt via TRUST_DOMAINS /
+# LOW_TRUST_DOMAINS (kommagetrennt). Subdomains matchen den Parent (gv.at -> x.gv.at).
+TRUST_DOMAINS_FILE = os.environ.get("TRUST_DOMAINS_FILE", "/app/trust_domains.txt")
+_ENV_TRUSTED = [d.strip().lower().lstrip(".") for d in os.environ.get("TRUST_DOMAINS", "").split(",") if d.strip()]
+_ENV_LOW = [d.strip().lower().lstrip(".") for d in os.environ.get("LOW_TRUST_DOMAINS", "").split(",") if d.strip()]
+
+
+def _load_trust():
+    trusted, low = set(_ENV_TRUSTED), set(_ENV_LOW)
+    try:
+        with open(TRUST_DOMAINS_FILE, encoding="utf-8") as f:
+            for raw in f:
+                line = raw.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                parts = line.split()
+                dom = parts[0].lower().lstrip(".")
+                tier = parts[1].lower() if len(parts) > 1 else "trusted"
+                (low if tier.startswith("low") else trusted).add(dom)
+    except FileNotFoundError:
+        pass
+    return trusted, low
+
+
+_TRUSTED, _LOW = _load_trust()
+log.info("Trust-Liste geladen: %d vertrauenswuerdig, %d niedrig (%s)",
+         len(_TRUSTED), len(_LOW), TRUST_DOMAINS_FILE)
+
+
+def domain_trust(dom: str) -> str:
+    """'trusted' | 'low' | 'neutral'. Subdomains matchen den Parent."""
+    dom = (dom or "").lower().lstrip(".")
+
+    def _hit(s):
+        return any(dom == e or dom.endswith("." + e) for e in s)
+
+    if _hit(_TRUSTED):
+        return "trusted"
+    if _hit(_LOW):
+        return "low"
+    return "neutral"
 SANDBOX_RUN_URL = os.environ.get("SANDBOX_RUN_URL", "http://code-sandbox:8000/run")
 # microVM-Executor (Microsandbox). Default: Host-Dienst via host.docker.internal.
 # Container-Variante: http://microsandbox-executor:8077/run
@@ -279,7 +322,8 @@ async def t_search_web(http: httpx.AsyncClient, query: str) -> str:
         for x in results[:WEB_MAX_RESULTS]:
             url = x.get("url", "")
             dom = urlparse(url).netloc.replace("www.", "") or "?"
-            lines.append(f"- ({dom}) {x.get('title','')} | {url}\n  {x.get('content','')}")
+            mark = {"trusted": " [vertrauenswuerdig]", "low": " [niedrig]"}.get(domain_trust(dom), "")
+            lines.append(f"- ({dom}{mark}) {x.get('title','')} | {url}\n  {x.get('content','')}")
         return "\n".join(lines)[:7000]
     except Exception as e:
         log.exception("Websuche fehlgeschlagen")

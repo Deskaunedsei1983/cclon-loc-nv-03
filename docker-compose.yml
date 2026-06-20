@@ -406,6 +406,14 @@ services:
       # Maskierte Suche + Sandbox
       - SEARCH_URL=http://presidio-proxy:8080/search
       - SANDBOX_RUN_URL=http://code-sandbox:8000/run
+      # Domain-Vertrauensliste fuer gewichtete Web-Quoten. Hauptliste = gemountete
+      # Datei (unten); .env ergaenzt schnell via TRUST_DOMAINS / LOW_TRUST_DOMAINS.
+      - TRUST_DOMAINS_FILE=/app/trust_domains.txt
+      - TRUST_DOMAINS=${TRUST_DOMAINS:-}
+      - LOW_TRUST_DOMAINS=${LOW_TRUST_DOMAINS:-}
+    volumes:
+      # Live pflegbar: editieren -> 'docker compose up -d --force-recreate agent'.
+      - ./agent/trust_domains.txt:/app/trust_domains.txt:ro
     networks:
       - aistack-core
       - aistack-sandbox
