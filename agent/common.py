@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import logging
 import datetime
+from urllib.parse import urlparse
 
 import httpx
 
@@ -63,6 +64,9 @@ MORPHIK_ENTITY_ID = os.environ.get("MORPHIK_ENTITY_ID", "agent")
 MORPHIK_JWT_TTL = int(os.environ.get("MORPHIK_JWT_TTL", "86400"))
 
 SEARCH_URL = os.environ.get("SEARCH_URL", "http://presidio-proxy:8080/search")
+# Wie viele Web-Treffer der Agent AUSWERTET (mehr Quellen -> Beleg-Quoten zaehlbar).
+# Die SearXNG-Engines selbst NICHT anfassen; das hier ist rein agentseitig.
+WEB_MAX_RESULTS = int(os.environ.get("WEB_MAX_RESULTS", "12"))
 SANDBOX_RUN_URL = os.environ.get("SANDBOX_RUN_URL", "http://code-sandbox:8000/run")
 # microVM-Executor (Microsandbox). Default: Host-Dienst via host.docker.internal.
 # Container-Variante: http://microsandbox-executor:8077/run
@@ -271,10 +275,12 @@ async def t_search_web(http: httpx.AsyncClient, query: str) -> str:
         results = r.json().get("results", [])
         if not results:
             return "Keine Suchergebnisse."
-        return "\n".join(
-            f"- {x.get('title','')} | {x.get('url','')}\n  {x.get('content','')}"
-            for x in results[:5]
-        )[:5000]
+        lines = []
+        for x in results[:WEB_MAX_RESULTS]:
+            url = x.get("url", "")
+            dom = urlparse(url).netloc.replace("www.", "") or "?"
+            lines.append(f"- ({dom}) {x.get('title','')} | {url}\n  {x.get('content','')}")
+        return "\n".join(lines)[:7000]
     except Exception as e:
         log.exception("Websuche fehlgeschlagen")
         return f"Such-Fehler: {e}"

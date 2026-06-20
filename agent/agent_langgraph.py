@@ -92,11 +92,12 @@ async def draft(state: State) -> State:
         f"\nBelege (RAGFlow/Morphik):\n{state.get('retrieved','(keine)')}",
     ]
     if state.get("verification"):
-        parts.append("\nWeb-Gegenpruefung — ARBEITE DIESE BEFUNDE EIN: bei [WIDERSPRUCH] "
-                     "beide Staende zeigen, bei [AKTUELLER] den neueren Web-Stand mit "
-                     "Datum/Quelle bevorzugen und die RAG-Stelle als evtl. veraltet markieren, "
-                     "bei [NICHT GEPRUEFT] die Aussage NICHT als gesichert darstellen "
-                     "(offen/ungeprueft kennzeichnen):\n"
+        parts.append("\nWeb-Gegenpruefung MIT BELEG-QUOTEN — ARBEITE EIN: [BESTAETIGT] "
+                     "uebernehmen (bei niedriger Quote vorsichtig formulieren), [AKTUELLER] "
+                     "den neueren Web-Stand mit Datum/Quelle bevorzugen, [WIDERSPRUCH] beide "
+                     "Staende zeigen, [KEINE FUNDE] (0%/0%) die Aussage als UNBELEGTES "
+                     "Modellwissen kennzeichnen (kein Fehler, aber NICHT als gesichert "
+                     "darstellen):\n"
                      + state["verification"])
     if state.get("critique"):
         parts.append(f"\nVerbessere den vorigen Entwurf gemaess Kritik:\n{state['critique']}")
@@ -128,15 +129,20 @@ _EXTRACT_SYS = (
 )
 
 _COMPARE_SYS = (
-    "Vergleiche die Aussagen des Entwurfs mit den TATSAECHLICHEN Web-Treffern. Schreibe "
-    "pro gepruefter Aussage GENAU eine Zeile, beginnend mit einem Tag:\n"
-    "  [BESTAETIGT] <Aussage>   NUR wenn ein konkreter Web-Treffer sie wirklich stuetzt\n"
-    "  [AKTUELLER] <neuer Stand inkl. Datum/Quelle> (Entwurf evtl. veraltet)\n"
-    "  [WIDERSPRUCH] RAG: <...> | Web: <...> (Quelle)\n"
-    "  [NICHT GEPRUEFT] <Aussage>   wenn KEIN Treffer sie abdeckt (z.B. fehlender "
-    "Live-Stand/aktuelle Ergebnisse) -> NICHT als bestaetigt ausgeben\n"
-    "Erfinde keine Bestaetigung; im Zweifel [NICHT GEPRUEFT]. Keine personenbezogenen "
-    "Daten. Knapp. Gar nichts Pruefbares -> genau: KEINE"
+    "Du quantifizierst die BELEGLAGE — nicht raten, nur die vorgelegten Quellen zaehlen.\n"
+    "Vorgelegt: der Entwurf, RAG-Belege (eigene Dokumente, je mit [Dok]) und Web-Treffer "
+    "(je mit (Domain)). Fuer JEDE pruefbare Aussage des Entwurfs gib GENAU diesen Block aus:\n"
+    "<knappe Aussage>\n"
+    "  RAG: <p>% (<k>/<n> Belege stuetzen | Dok: <Namen oder ->)\n"
+    "  Web: <q>% (<j>/<m> Quellen stuetzen | Domains: <reale Domains>, "
+    "vertrauenswuerdige zuerst: wikipedia/wikidata/offizielle)\n"
+    "  Fazit: [BESTAETIGT] (Web-Mehrheit und/oder RAG stuetzt) | "
+    "[AKTUELLER] (Web neuer als RAG, mit Datum/Quelle) | "
+    "[WIDERSPRUCH] (Quellen uneinig -> beide Staende) | "
+    "[KEINE FUNDE] (0%/0% — KEIN Fehler, nur kein Beleg; ruht auf Modellwissen)\n"
+    "Regeln: Prozente AUSSCHLIESSLICH aus den vorgelegten Quellen; nenne die realen "
+    "Domains/Dok, die stuetzen (so ist die Quote pruefbar). Keine PII. Knapp. "
+    "Nichts Pruefbares im Entwurf -> genau: KEINE"
 )
 
 
