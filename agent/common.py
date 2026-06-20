@@ -68,16 +68,27 @@ SEARCH_URL = os.environ.get("SEARCH_URL", "http://presidio-proxy:8080/search")
 # Die SearXNG-Engines selbst NICHT anfassen; das hier ist rein agentseitig.
 WEB_MAX_RESULTS = int(os.environ.get("WEB_MAX_RESULTS", "12"))
 
-# --- Domain-Vertrauensliste (gewichtete Web-Quoten) -------------------------
-# Hauptliste: Datei (gemountet, live pflegbar). .env ergaenzt via TRUST_DOMAINS /
-# LOW_TRUST_DOMAINS (kommagetrennt). Subdomains matchen den Parent (gv.at -> x.gv.at).
+# --- Domain-Vertrauensliste (gewichtete, themen-bewusste Web-Quoten) ---------
+# Hauptliste: Datei (gemountet, live pflegbar). Format "domain [tier] [topics]";
+# .env ergaenzt via TRUST_DOMAINS / LOW_TRUST_DOMAINS (Thema '*'). Subdomains
+# matchen den Parent (gv.at -> x.gv.at); '*.xy.com' == 'xy.com'.
 TRUST_DOMAINS_FILE = os.environ.get("TRUST_DOMAINS_FILE", "/app/trust_domains.txt")
-_ENV_TRUSTED = [d.strip().lower().lstrip(".") for d in os.environ.get("TRUST_DOMAINS", "").split(",") if d.strip()]
-_ENV_LOW = [d.strip().lower().lstrip(".") for d in os.environ.get("LOW_TRUST_DOMAINS", "").split(",") if d.strip()]
+
+
+def _norm_dom(d: str) -> str:
+    d = d.strip().lower().lstrip(".")
+    return d[2:] if d.startswith("*.") else d
 
 
 def _load_trust():
-    trusted, low = set(_ENV_TRUSTED), set(_ENV_LOW)
+    # domain -> (tier, frozenset(topics));  '*' = alle Themen
+    m: "dict[str, tuple[str, frozenset]]" = {}
+    for d in os.environ.get("TRUST_DOMAINS", "").split(","):
+        if d.strip():
+            m[_norm_dom(d)] = ("trusted", frozenset({"*"}))
+    for d in os.environ.get("LOW_TRUST_DOMAINS", "").split(","):
+        if d.strip():
+            m[_norm_dom(d)] = ("low", frozenset({"*"}))
     try:
         with open(TRUST_DOMAINS_FILE, encoding="utf-8") as f:
             for raw in f:
@@ -85,31 +96,29 @@ def _load_trust():
                 if not line:
                     continue
                 parts = line.split()
-                dom = parts[0].lower().lstrip(".")
-                tier = parts[1].lower() if len(parts) > 1 else "trusted"
-                (low if tier.startswith("low") else trusted).add(dom)
+                dom = _norm_dom(parts[0])
+                tier = "low" if (len(parts) > 1 and parts[1].lower().startswith("low")) else "trusted"
+                topics = (frozenset(t.strip().lower() for t in parts[2].split(",") if t.strip())
+                          if len(parts) > 2 else frozenset({"*"}))
+                m[dom] = (tier, topics or frozenset({"*"}))
     except FileNotFoundError:
         pass
-    return trusted, low
+    return m
 
 
-_TRUSTED, _LOW = _load_trust()
-log.info("Trust-Liste geladen: %d vertrauenswuerdig, %d niedrig (%s)",
-         len(_TRUSTED), len(_LOW), TRUST_DOMAINS_FILE)
+_TRUST_MAP = _load_trust()
+log.info("Trust-Liste geladen: %d Domains (%s)", len(_TRUST_MAP), TRUST_DOMAINS_FILE)
 
 
-def domain_trust(dom: str) -> str:
-    """'trusted' | 'low' | 'neutral'. Subdomains matchen den Parent."""
+def domain_trust(dom: str):
+    """(tier, topics) — tier in trusted|low|neutral. Spezifischster (laengster)
+    Treffer gewinnt; Subdomains matchen den Parent."""
     dom = (dom or "").lower().lstrip(".")
-
-    def _hit(s):
-        return any(dom == e or dom.endswith("." + e) for e in s)
-
-    if _hit(_TRUSTED):
-        return "trusted"
-    if _hit(_LOW):
-        return "low"
-    return "neutral"
+    best_key, best_val = "", ("neutral", frozenset())
+    for entry, val in _TRUST_MAP.items():
+        if (dom == entry or dom.endswith("." + entry)) and len(entry) > len(best_key):
+            best_key, best_val = entry, val
+    return best_val
 SANDBOX_RUN_URL = os.environ.get("SANDBOX_RUN_URL", "http://code-sandbox:8000/run")
 # microVM-Executor (Microsandbox). Default: Host-Dienst via host.docker.internal.
 # Container-Variante: http://microsandbox-executor:8077/run
@@ -322,7 +331,14 @@ async def t_search_web(http: httpx.AsyncClient, query: str) -> str:
         for x in results[:WEB_MAX_RESULTS]:
             url = x.get("url", "")
             dom = urlparse(url).netloc.replace("www.", "") or "?"
-            mark = {"trusted": " [vertrauenswuerdig]", "low": " [niedrig]"}.get(domain_trust(dom), "")
+            tier, topics = domain_trust(dom)
+            if tier == "trusted":
+                tt = "" if ("*" in topics or not topics) else "·" + ",".join(sorted(topics))
+                mark = f" [vertrauenswuerdig{tt}]"
+            elif tier == "low":
+                mark = " [niedrig]"
+            else:
+                mark = ""
             lines.append(f"- ({dom}{mark}) {x.get('title','')} | {url}\n  {x.get('content','')}")
         return "\n".join(lines)[:7000]
     except Exception as e:

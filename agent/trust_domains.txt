@@ -1,52 +1,51 @@
 # trust_domains.txt — Domain-Vertrauensliste fuer die Web-Gegenpruefung des Agenten.
 # =============================================================================
-# Format pro Zeile:   domain [tier]      tier = trusted | low   (Default: trusted)
-# '#' = Kommentar. Subdomains matchen den Parent automatisch (gv.at -> ris.bka.gv.at).
+# Format pro Zeile:   domain  [tier]  [topics]
+#   tier   = trusted | low          (Default: trusted)
+#   topics = optionale Themen, kommagetrennt; Default '*' = alle Themen.
+#            Eine [vertrauenswuerdig·THEMA]-Quelle zaehlt VOLL nur, wenn THEMA zur
+#            Frage passt; sonst wie neutral. '*' gilt fuer alle Fragen.
+# domain:
+#   - Subdomains matchen automatisch:  gv.at  -> ris.bka.gv.at
+#   - '*.xy.com' ist gleichbedeutend mit 'xy.com' (deckt Domain + ALLE Subdomains).
+#   - Spezifischster (laengster) Treffer gewinnt.
+# '#' = Kommentar.
 #
-# Wirkung: jede Web-Quelle wird in der Gegenpruefung als [vertrauenswuerdig] /
-# [niedrig] / (neutral) markiert. Die Beleg-Quote gewichtet vertrauenswuerdige
-# Quellen STARK, niedrige schwach -> [BESTAETIGT] braucht vertrauenswuerdige Stuetze.
-#
-# Pflege:
-#  - Datei editieren -> 'docker compose up -d --force-recreate agent' (Reload beim Start).
-#  - Schnell-Ergaenzung ohne Datei: .env  TRUST_DOMAINS=a.at,b.eu / LOW_TRUST_DOMAINS=c.com
+# Pflege: Datei editieren -> 'docker compose up -d --force-recreate agent'.
+#   Schnell ohne Datei-Edit: .env  TRUST_DOMAINS=... / LOW_TRUST_DOMAINS=...  (Thema '*').
+# Themen-Beispiele: recht, sozialversicherung, gesundheit, statistik, wirtschaft, technik
 
-# ----------------- HOCH VERTRAUENSWUERDIG (offiziell / Referenz) ---------------
-# Oesterreich: Recht, Verwaltung, Sozialversicherung
-gv.at                  trusted
-ris.bka.gv.at          trusted
-sozialversicherung.at  trusted
-gesundheitskasse.at    trusted
-pensionsversicherung.at trusted
-pv.at                  trusted
-auva.at                trusted
-statistik.at           trusted
-wko.at                 trusted
-usp.gv.at              trusted
-oesterreich.gv.at      trusted
+# ----------------- HOCH VERTRAUENSWUERDIG -------------------------------------
+# Oesterreich / EU — Recht & Verwaltung & Sozialversicherung
+*.gv.at                trusted   recht,verwaltung
+ris.bka.gv.at          trusted   recht
+sozialversicherung.at  trusted   sozialversicherung
+gesundheitskasse.at    trusted   sozialversicherung,gesundheit
+pv.at                  trusted   sozialversicherung
+auva.at                trusted   sozialversicherung
+eur-lex.europa.eu      trusted   recht
+*.europa.eu            trusted   recht,verwaltung
+statistik.at           trusted   statistik
+wko.at                 trusted   wirtschaft
 
-# EU / international
-europa.eu              trusted
-eur-lex.europa.eu      trusted
-ec.europa.eu           trusted
-who.int                trusted
-oecd.org               trusted
-iso.org                trusted
+# Gesundheit / international
+who.int                trusted   gesundheit
+oecd.org               trusted   wirtschaft,statistik
 
-# Allgemeine Referenz / Enzyklopaedie
-wikipedia.org          trusted
-wikidata.org           trusted
+# Allgemeine Referenz (alle Themen)
+wikipedia.org          trusted   *
+wikidata.org           trusted   *
 
 # Technik / Entwicklung (offizielle Doku)
-python.org             trusted
-postgresql.org         trusted
-kubernetes.io          trusted
-docker.com             trusted
-nvidia.com             trusted
-docs.vllm.ai           trusted
+python.org             trusted   technik
+postgresql.org         trusted   technik
+kubernetes.io          trusted   technik
+docker.com             trusted   technik
+docs.vllm.ai           trusted   technik
+nvidia.com             trusted   technik
 
-# ----------------- GERING (UGC / Foren / SEO-anfaellig) ------------------------
-reddit.com             low
+# ----------------- GERING (UGC / Foren / SEO-anfaellig) -----------------------
+*.reddit.com           low
 quora.com              low
 facebook.com           low
 x.com                  low
