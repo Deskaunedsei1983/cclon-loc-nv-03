@@ -205,12 +205,14 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}     # nur falls das Modell gated ist
     volumes:
       - mem0-struct-models:/models
-    # WICHTIG: NICHT-Reasoning-Modell! Bei aktivem Thinking ist die GBNF-Erzwingung
-    # unter response_format inaktiv (llama.cpp #20345) -> JSON nicht mehr garantiert.
-    # Default Qwen2.5-1.5B-Instruct (kein Thinking). Wechsel via .env MEM0_STRUCT_HF
-    # (z.B. Qwen3.5-2B -> dann Thinking abschalten).
+    # Qwen3.5-2B ist ein Thinking-Modell -> '--reasoning off' schaltet Reasoning ab,
+    # sonst ist die GBNF-Erzwingung unter response_format inaktiv (llama.cpp #20345)
+    # und das JSON nicht mehr garantiert. '--alias mem0-struct' = feste Modell-ID
+    # (so referenzieren mem0 UND OWUI dasselbe Modell). Modellwechsel via MEM0_STRUCT_HF.
     command: >
-      -hf ${MEM0_STRUCT_HF:-Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M}
+      -hf ${MEM0_STRUCT_HF:-unsloth/Qwen3.5-2B-GGUF:Q4_K_M}
+      --alias mem0-struct
+      --reasoning off
       --host 0.0.0.0 --port 8088
       --ctx-size 8192 --jinja
       --parallel 2 --threads ${MEM0_STRUCT_THREADS:-6}
@@ -571,11 +573,11 @@ services:
       # OWUI-Chat-Modell exponiert. Das rohe Hauptmodell (main/gemma-main) wird
       # NICHT mehr verbunden -> es verschwindet aus dem Auswahlmenue (der Agent
       # spricht vllm-main intern direkt an, OWUI braucht es dafuer nicht). Der
-      # Helfer bleibt NUR als Hintergrund-Task-Modell (Titel/Tags/Suchqueries),
-      # nicht zum Chatten -> in Admin -> Settings -> Models ausblenden (1 Klick).
-      # Helfer abschaltbar: bei "Helfer aus" in der .env auf "http://agent:9000/v1"
-      # (nur der Agent) setzen, sonst zeigt OWUI einen toten vllm-helper-Connector.
-      - "OPENAI_API_BASE_URLS=${OWUI_OPENAI_API_BASE_URLS:-http://agent:9000/v1;http://vllm-helper:30001/v1}"
+      # Hintergrund-Task-Modell (Titel/Tags/Suchqueries) ist der CPU-Struct-Helfer
+      # 'mem0-struct' (llama.cpp, ~0 VRAM, Reasoning aus) -> KEIN GPU-Helfer noetig.
+      # Nicht zum Chatten -> in Admin -> Settings -> Models ausblenden (1 Klick).
+      # Braucht das Profil "mem0struct". Task-Modell ganz aus: OWUI_ENABLE_TASKS=false.
+      - "OPENAI_API_BASE_URLS=${OWUI_OPENAI_API_BASE_URLS:-http://agent:9000/v1;http://mem0-struct:8088/v1}"
       - "OPENAI_API_KEYS=${OWUI_OPENAI_API_KEYS:-not-needed;not-needed}"
       # research-agent = zentraler Assistent (RAG + Web-Gegenpruefung + Code):
       # neue Chats waehlen ihn per Default.
@@ -611,8 +613,8 @@ services:
       - ENABLE_SEARCH_QUERY_GENERATION=${OWUI_ENABLE_TASKS:-true}
       - ENABLE_TITLE_GENERATION=${OWUI_ENABLE_TASKS:-true}
       - ENABLE_TAGS_GENERATION=${OWUI_ENABLE_TASKS:-true}
-      - TASK_MODEL_EXTERNAL=${OWUI_TASK_MODEL:-qwen-helper} # leichter Helper baut Titel/Tags/Suchqueries
-      - TASK_MODEL=${OWUI_TASK_MODEL:-qwen-helper}
+      - TASK_MODEL_EXTERNAL=${OWUI_TASK_MODEL:-mem0-struct} # CPU-Struct-Helfer baut Titel/Tags/Suchqueries (~0 VRAM)
+      - TASK_MODEL=${OWUI_TASK_MODEL:-mem0-struct}
       # Folgefrage-/Autocomplete-Vorschlaege AN (laufen ueber den Helfer, bestaetigt
       # via /metrics). HINWEIS: OWUI resendet dafuer die letzten Nachrichten inkl. der
       # Web-Inhalte ans Task-Modell (#15081) -> bei sehr grossen Seiten kann der Helfer
