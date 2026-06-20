@@ -675,6 +675,10 @@ services:
       # Diese OPENAI_*-Defaults bleiben nur als litellm-Fallback:
       - OPENAI_BASE_URL=http://vllm-main:5568/v1
       - OPENAI_API_KEY=not-needed
+      # Embedding-Dimension MUSS = EMBED_MODEL-Ausgabe (4B=2560, 8B=4096), sonst
+      # "dimension mismatch got X expected Y" -> Morphik-Retrieval scheitert.
+      # Bei Aenderung: morphik-pg-data-Volume neu (Spalte ist auf die Dim fixiert).
+      - VECTOR_DIMENSIONS=2560
       - JWT_SECRET_KEY=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
       # ColPali laeuft lokal auf der GPU -> HF-Cache/Token wie bei den vLLMs:
       - HF_TOKEN=${HF_TOKEN:-}

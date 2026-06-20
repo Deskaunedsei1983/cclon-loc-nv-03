@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import logging
+import datetime
 
 import httpx
 
@@ -97,13 +98,44 @@ Nenne am Ende die Quellen (RAG-Dokument + ggf. URL) und erzeugte Dateinamen.
 """
 
 
+# --- Aktueller Zeitbezug (pro Anfrage zur Laufzeit!) ------------------------
+# Ein LLM hat KEINE Uhr -> ohne echtes Datum raet es seinen Trainings-Cutoff.
+# Wir injizieren das reale Datum bei JEDEM Request (nicht beim Import, sonst
+# friert es auf den Container-Start ein). Ankert heute/gestern/aktuell/usw.
+try:
+    from zoneinfo import ZoneInfo
+    _TZ = ZoneInfo(os.environ.get("AGENT_TZ", "Europe/Vienna"))
+except Exception:  # tzdata fehlt im Image -> UTC
+    _TZ = datetime.timezone.utc
+
+
+def now_context() -> str:
+    now = datetime.datetime.now(_TZ)
+    return (
+        f"Heutiges Datum/Uhrzeit (Laufzeit): {now:%A, %Y-%m-%d %H:%M %Z}. "
+        "Rechne ALLE relativen Zeitangaben (heute, gestern, morgen, aktuell, "
+        "dieses Jahr, 'vor 10 Jahren', 'ist X schon vorbei') von DIESEM Zeitpunkt "
+        "aus; nutze NICHT dein Trainingswissen als 'jetzt'. Bei laufenden oder "
+        "kuerzlich gestarteten Ereignissen NICHT annehmen, etwas habe noch nicht "
+        "stattgefunden -> den Live-Stand per 'search_web' pruefen."
+    )
+
+
+def system_prompt_now() -> str:
+    """SYSTEM_PROMPT + frischer Zeitbezug. In den Agenten IMMER statt des rohen
+    SYSTEM_PROMPT verwenden, damit das Datum pro Anfrage stimmt."""
+    return SYSTEM_PROMPT + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + now_context()
+
+
 # --- Mem0 -------------------------------------------------------------------
 def build_memory():
     from mem0 import Memory
     config = {
         "llm": {"provider": "openai", "config": {
             "model": LLM_MODEL, "openai_base_url": LLM_BASE_URL,
-            "api_key": LLM_API_KEY, "temperature": 0.1}},
+            # top_p explizit: mem0/vLLM-Default 0.0 -> vLLM lehnt ab
+            # ("top_p must be in (0, 1]") -> Mem0-Add schlug fehl.
+            "api_key": LLM_API_KEY, "temperature": 0.1, "top_p": 1.0}},
         "embedder": {"provider": "openai", "config": {
             "model": EMBED_MODEL, "openai_base_url": EMBED_BASE_URL,
             "api_key": "not-needed", "embedding_dims": EMBED_DIMS}},

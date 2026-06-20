@@ -68,14 +68,16 @@ async def draft(state: State) -> State:
     if state.get("verification"):
         parts.append("\nWeb-Gegenpruefung — ARBEITE DIESE BEFUNDE EIN: bei [WIDERSPRUCH] "
                      "beide Staende zeigen, bei [AKTUELLER] den neueren Web-Stand mit "
-                     "Datum/Quelle bevorzugen und die RAG-Stelle als evtl. veraltet markieren:\n"
+                     "Datum/Quelle bevorzugen und die RAG-Stelle als evtl. veraltet markieren, "
+                     "bei [NICHT GEPRUEFT] die Aussage NICHT als gesichert darstellen "
+                     "(offen/ungeprueft kennzeichnen):\n"
                      + state["verification"])
     if state.get("critique"):
         parts.append(f"\nVerbessere den vorigen Entwurf gemaess Kritik:\n{state['critique']}")
         parts.append(f"\nVoriger Entwurf:\n{state.get('draft','')}")
     parts.append("\nBrauchst du eine Berechnung/Datei, gib EINEN ```python ...``` Block aus; "
                  "er wird in der Sandbox ausgefuehrt.")
-    resp = await _llm.ainvoke([{"role": "system", "content": C.SYSTEM_PROMPT},
+    resp = await _llm.ainvoke([{"role": "system", "content": C.system_prompt_now()},
                                {"role": "user", "content": "\n".join(parts)}])
     return {"draft": resp.content, "iteration": state.get("iteration", 0) + 1}
 
@@ -99,12 +101,15 @@ _EXTRACT_SYS = (
 )
 
 _COMPARE_SYS = (
-    "Vergleiche die Aussagen des Entwurfs mit den Web-Treffern. Schreibe pro geprueft "
-    "Aussage GENAU eine Zeile, beginnend mit einem Tag:\n"
-    "  [BESTAETIGT] <Aussage>\n"
+    "Vergleiche die Aussagen des Entwurfs mit den TATSAECHLICHEN Web-Treffern. Schreibe "
+    "pro gepruefter Aussage GENAU eine Zeile, beginnend mit einem Tag:\n"
+    "  [BESTAETIGT] <Aussage>   NUR wenn ein konkreter Web-Treffer sie wirklich stuetzt\n"
     "  [AKTUELLER] <neuer Stand inkl. Datum/Quelle> (Entwurf evtl. veraltet)\n"
     "  [WIDERSPRUCH] RAG: <...> | Web: <...> (Quelle)\n"
-    "Keine personenbezogenen Daten. Knapp. Nichts Belastbares gefunden -> genau: KEINE"
+    "  [NICHT GEPRUEFT] <Aussage>   wenn KEIN Treffer sie abdeckt (z.B. fehlender "
+    "Live-Stand/aktuelle Ergebnisse) -> NICHT als bestaetigt ausgeben\n"
+    "Erfinde keine Bestaetigung; im Zweifel [NICHT GEPRUEFT]. Keine personenbezogenen "
+    "Daten. Knapp. Gar nichts Pruefbares -> genau: KEINE"
 )
 
 
@@ -129,7 +134,7 @@ async def verify(state: State) -> State:
 
     # 1) Pruefwuerdige, PII-freie Suchanfragen bestimmen.
     qresp = await _llm_strict.ainvoke(
-        [{"role": "system", "content": _EXTRACT_SYS % VERIFY_MAX_QUERIES},
+        [{"role": "system", "content": C.now_context() + "\n\n" + _EXTRACT_SYS % VERIFY_MAX_QUERIES},
          {"role": "user", "content": f"Entwurf:\n{draft_text}\n\nBelege:\n{state.get('retrieved','')}"}])
     queries = _queries_from(qresp.content)
     if not queries:
@@ -144,7 +149,7 @@ async def verify(state: State) -> State:
 
     # 3) Entwurf gegen die Treffer abgleichen -> erklaerbare Notizen.
     cresp = await _llm_strict.ainvoke(
-        [{"role": "system", "content": _COMPARE_SYS},
+        [{"role": "system", "content": C.now_context() + "\n\n" + _COMPARE_SYS},
          {"role": "user", "content": f"Entwurf:\n{draft_text}\n\nWeb-Treffer:\n" + "\n\n".join(evidence)}])
     notes = cresp.content.strip()
     if notes.upper() == "KEINE":
