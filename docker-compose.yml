@@ -209,12 +209,16 @@ services:
     # sonst ist die GBNF-Erzwingung unter response_format inaktiv (llama.cpp #20345)
     # und das JSON nicht mehr garantiert. '--alias mem0-struct' = feste Modell-ID
     # (so referenzieren mem0 UND OWUI dasselbe Modell). Modellwechsel via MEM0_STRUCT_HF.
+    # WICHTIG: --ctx-size wird durch --parallel geteilt (Tokens PRO Slot). mem0s
+    # Memory-Manager-Prompt + max_tokens=3000 braucht ~4600 Tokens/Call -> bei
+    # ctx 8192/parallel 2 = nur 4096/Slot -> leere Antwort ("Expecting value char 0").
+    # Daher ctx 16384 (=> 8192/Slot). Via MEM0_STRUCT_CTX anpassbar.
     command: >
       -hf ${MEM0_STRUCT_HF:-unsloth/Qwen3.5-2B-GGUF:Q4_K_M}
       --alias mem0-struct
       --reasoning off
       --host 0.0.0.0 --port 8088
-      --ctx-size 8192 --jinja
+      --ctx-size ${MEM0_STRUCT_CTX:-16384} --jinja
       --parallel 2 --threads ${MEM0_STRUCT_THREADS:-6}
     networks:
       - aistack-core
