@@ -205,7 +205,7 @@ async def critic(state: State) -> State:
     ctx = (f"Frage:\n{state['query']}\n\nBelege:\n{state.get('retrieved','')}\n\n"
            f"Entwurf:\n{state.get('draft','')}\n\nAusfuehrungsergebnis:\n{state.get('exec_out','(keins)')}\n\n"
            f"Web-Gegenpruefung:\n{state.get('verification') or '(keine pruefbaren Aussagen)'}")
-    resp = await _llm.ainvoke([{"role": "system", "content": judge},
+    resp = await _llm.ainvoke([{"role": "system", "content": C.now_context() + "\n\n" + judge},
                                {"role": "user", "content": ctx}])
     text = resp.content.strip()
     approved = text.upper().startswith("APPROVE") or state.get("iteration", 0) >= MAX_ITER

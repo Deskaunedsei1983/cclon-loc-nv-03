@@ -402,13 +402,15 @@ async def t_retrieve_multimodal(http: httpx.AsyncClient, query: str) -> str:
         r = await http.post(url, json={"query": query, "k": 6}, headers=headers, timeout=40.0)
         r.raise_for_status()
         data = r.json()
-        chunks = data.get("chunks") or data.get("results") or data
+        chunks = data if isinstance(data, list) else (data.get("chunks") or data.get("results") or [])
         if isinstance(chunks, list) and chunks:
-            return "\n\n".join(str(c.get("content", c))[:800] for c in chunks[:6])[:6000]
+            return "\n\n".join(
+                str(c.get("content", c) if isinstance(c, dict) else c)[:800] for c in chunks[:6]
+            )[:6000]
         return "Keine multimodalen Treffer."
     except Exception as e:
-        log.exception("Morphik-Retrieval fehlgeschlagen")
-        return f"Morphik-Fehler: {e}"
+        log.warning("Morphik-Retrieval fehlgeschlagen (ignoriert): %s", e)
+        return "Keine multimodalen Treffer."
 
 
 async def t_search_web(http: httpx.AsyncClient, query: str) -> str:
