@@ -189,6 +189,34 @@ services:
     # Kein depends_on auf das Hauptmodell mehr: es ist jetzt profil-gegated
     # (main-qwen|main-gemma) und wird per Netzwerk-Alias "vllm-main" erreicht.
 
+  # ===== Mem0 Structured-Output-Helfer (CPU, llama.cpp) — OPTIONAL ==========
+  #  Liefert mem0 GARANTIERT valides JSON (GBNF aus response_format) auf der CPU
+  #  -> ~0 VRAM, hardware-agnostisch (CUDA wie ROCm). Nimmt mem0 von der GPU, sodass
+  #  der GPU-Helfer aus bleiben kann. Opt-in: Profil "mem0struct". Erster Start zieht
+  #  das GGUF einmalig (oeffentliches Modell, kein PII); Inferenz bleibt lokal.
+  mem0-struct:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: mem0_struct
+    profiles: ["mem0struct"]
+    restart: unless-stopped
+    expose: ["8088"]
+    environment:
+      - LLAMA_CACHE=/models        # GGUF persistent (einmaliger Download)
+      - HF_TOKEN=${HF_TOKEN:-}     # nur falls das Modell gated ist
+    volumes:
+      - mem0-struct-models:/models
+    # WICHTIG: NICHT-Reasoning-Modell! Bei aktivem Thinking ist die GBNF-Erzwingung
+    # unter response_format inaktiv (llama.cpp #20345) -> JSON nicht mehr garantiert.
+    # Default Qwen2.5-1.5B-Instruct (kein Thinking). Wechsel via .env MEM0_STRUCT_HF
+    # (z.B. Qwen3.5-2B -> dann Thinking abschalten).
+    command: >
+      -hf ${MEM0_STRUCT_HF:-Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M}
+      --host 0.0.0.0 --port 8088
+      --ctx-size 8192 --jinja
+      --parallel 2 --threads ${MEM0_STRUCT_THREADS:-6}
+    networks:
+      - aistack-core
+
   # ===================== 3) EMBEDDINGS fuer Mem0 (NICHT RAGFlows TEI) ========
   # Bewusst "embeddings" statt "tei" genannt, um Namenskollision mit RAGFlows
   # tei-Service zu vermeiden. Versorgt Mem0 (Agent-Gedaechtnis).
@@ -414,9 +442,12 @@ services:
       # Mem0 (Memory) laeuft auf MEM0_LLM (Default Helfer). Helfer AUS -> Memory
       # deaktiviert sich automatisch + leise. Hart aus: MEM0_ENABLED=false.
       - MEM0_ENABLED=${MEM0_ENABLED:-true}
-      # 'auto': Helfer bevorzugt, sonst autoregressives Hauptmodell, sonst aus.
+      # 'auto': CPU-Struct-Sidecar (Profil mem0struct) zuerst, dann GPU-Helfer, dann
+      # autoregressives Hauptmodell, sonst aus.
       - MEM0_LLM_BASE_URL=${MEM0_LLM_BASE_URL:-auto}
       - MEM0_LLM_MODEL=${MEM0_LLM_MODEL:-qwen-helper}
+      - MEM0_STRUCT_URL=${MEM0_STRUCT_URL:-http://mem0-struct:8088/v1}
+      - MEM0_STRUCT_MODEL=${MEM0_STRUCT_MODEL:-mem0-struct}
       # Auto-Blocklist: der Agent LIEST nur die Datei (KEIN Egress). Befuellt vom
       # 'blocklist-fetcher'-Sidecar (Profil "blocklist"). REFRESH = Datei-Neuladen.
       - BLOCKLIST_FILE=/app/blocklist/blocklist.txt
@@ -767,6 +798,7 @@ volumes:
   morphik-pg-data:
   morphik-storage:
   blocklist-data:   # vom blocklist-fetcher-Sidecar gepflegt, vom agent nur gelesen
+  mem0-struct-models:   # GGUF-Cache des CPU-Struct-Helfers (einmaliger Download)
 
 networks:
   # Eigene, von DIESEM Compose erzeugte Netze:

@@ -45,6 +45,10 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", "not-needed")
 # Feste Wahl moeglich: MEM0_LLM_BASE_URL=http://vllm-helper:30001/v1 + MEM0_LLM_MODEL.
 MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", "auto")
 MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "qwen-helper")
+# Optionaler CPU-Struct-Sidecar (llama.cpp, ~0 VRAM, garantiertes JSON via GBNF).
+# Im 'auto'-Modus ZUERST probiert -> nimmt mem0 ganz von der GPU. Profil "mem0struct".
+MEM0_STRUCT_URL = os.environ.get("MEM0_STRUCT_URL", "http://mem0-struct:8088/v1")
+MEM0_STRUCT_MODEL = os.environ.get("MEM0_STRUCT_MODEL", "mem0-struct")
 # Memory hart abschaltbar; sonst auto-deaktiviert, wenn das MEM0-LLM nicht erreichbar ist.
 MEM0_ENABLED = os.environ.get("MEM0_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
 
@@ -255,11 +259,13 @@ def _models_list(base_url: str):
 
 def _pick_mem0_llm():
     """(base_url, model) fuer mem0 ODER None. mem0 braucht JSON/structured outputs.
-    'auto': Helfer bevorzugt (leicht + JSON-faehig); sonst das aktive Hauptmodell,
-    ABER nur wenn autoregressiv (Gemma-Diffusion kann kein JSON -> an den served-
-    model-names erkannt). Explizite MEM0_LLM_BASE_URL hat Vorrang."""
+    'auto'-Reihenfolge: CPU-Struct-Sidecar (garantiertes JSON, ~0 VRAM) -> GPU-Helfer
+    -> aktives autoregressives Hauptmodell (Gemma-Diffusion kann kein JSON, an den
+    served-model-names erkannt -> uebersprungen) -> None. Explizite Wahl hat Vorrang."""
     if MEM0_LLM_BASE_URL and MEM0_LLM_BASE_URL.lower() != "auto":
         return MEM0_LLM_BASE_URL, MEM0_LLM_MODEL
+    if MEM0_STRUCT_URL and _models_list(MEM0_STRUCT_URL) is not None:
+        return MEM0_STRUCT_URL, MEM0_STRUCT_MODEL
     helper = "http://vllm-helper:30001/v1"
     if _models_list(helper) is not None:
         return helper, "qwen-helper"
