@@ -205,16 +205,15 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}     # nur falls das Modell gated ist
     volumes:
       - mem0-struct-models:/models
-    # Qwen3.5-2B ist ein Thinking-Modell -> '--reasoning off' schaltet Reasoning ab,
-    # sonst ist die GBNF-Erzwingung unter response_format inaktiv (llama.cpp #20345)
-    # und das JSON nicht mehr garantiert. '--alias mem0-struct' = feste Modell-ID
-    # (so referenzieren mem0 UND OWUI dasselbe Modell). Modellwechsel via MEM0_STRUCT_HF.
-    # WICHTIG: --ctx-size wird durch --parallel geteilt (Tokens PRO Slot). mem0s
-    # Memory-Manager-Prompt + max_tokens=3000 braucht ~4600 Tokens/Call -> bei
-    # ctx 8192/parallel 2 = nur 4096/Slot -> leere Antwort ("Expecting value char 0").
-    # Daher ctx 16384 (=> 8192/Slot). Via MEM0_STRUCT_CTX anpassbar.
+    # WICHTIG: NICHT-Reasoning-Modell (Qwen2.5-Instruct). Reasoning-Modelle (Qwen3.5 &
+    # Co.) DENKEN bei komplexen Prompts (mem0s Memory-Manager) trotz '--reasoning off'
+    # -> dann ist die GBNF-Erzwingung unter response_format inaktiv (#20345) -> Antwort
+    # beginnt mit <think> statt JSON -> mem0 "Expecting value: line 1 column 1 (char 0)".
+    # Ein Modell OHNE Thinking vermeidet das komplett (GBNF immer aktiv). '--alias
+    # mem0-struct' = feste Modell-ID (mem0 UND OWUI). Modellwechsel via MEM0_STRUCT_HF.
+    # --ctx-size wird durch --parallel geteilt (Tokens/Slot) -> ctx 16384 = 8192/Slot.
     command: >
-      -hf ${MEM0_STRUCT_HF:-unsloth/Qwen3.5-2B-GGUF:Q4_K_M}
+      -hf ${MEM0_STRUCT_HF:-Qwen/Qwen2.5-3B-Instruct-GGUF:Q4_K_M}
       --alias mem0-struct
       --reasoning off
       --host 0.0.0.0 --port 8088
