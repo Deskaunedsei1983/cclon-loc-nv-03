@@ -35,15 +35,14 @@ MODEL_ID = "research-agent"
 
 @app.on_event("startup")
 async def _start_blocklist_refresh():
-    """OPT-IN: nur wenn BLOCKLIST_URL gesetzt ist -> stuendlicher Domain-Abgleich
-    (sofort + alle BLOCKLIST_REFRESH_MIN Minuten) in den low-Tier."""
-    if not getattr(C, "BLOCKLIST_URL", ""):
-        return
+    """Liest die (vom blocklist-fetcher-Sidecar gepflegte) Blocklist-Datei beim Start
+    und danach periodisch neu. KEIN Netzzugriff im Agent."""
+    C.load_blocklist()
 
     async def _loop():
         while True:
-            await C.refresh_blocklist()
             await asyncio.sleep(max(5, C.BLOCKLIST_REFRESH_MIN) * 60)
+            C.load_blocklist()
 
     asyncio.create_task(_loop())
 

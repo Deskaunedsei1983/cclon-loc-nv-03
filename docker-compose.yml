@@ -414,15 +414,17 @@ services:
       # Mem0 (Memory) laeuft auf MEM0_LLM (Default Helfer). Helfer AUS -> Memory
       # deaktiviert sich automatisch + leise. Hart aus: MEM0_ENABLED=false.
       - MEM0_ENABLED=${MEM0_ENABLED:-true}
-      - MEM0_LLM_BASE_URL=${MEM0_LLM_BASE_URL:-http://vllm-helper:30001/v1}
+      # 'auto': Helfer bevorzugt, sonst autoregressives Hauptmodell, sonst aus.
+      - MEM0_LLM_BASE_URL=${MEM0_LLM_BASE_URL:-auto}
       - MEM0_LLM_MODEL=${MEM0_LLM_MODEL:-qwen-helper}
-      # Auto-Blocklist (low-Tier), OPT-IN: URL setzen aktiviert den stuendlichen
-      # Abgleich. ACHTUNG: braucht Internet-Egress fuer den agent-Container.
-      - BLOCKLIST_URL=${BLOCKLIST_URL:-}
+      # Auto-Blocklist: der Agent LIEST nur die Datei (KEIN Egress). Befuellt vom
+      # 'blocklist-fetcher'-Sidecar (Profil "blocklist"). REFRESH = Datei-Neuladen.
+      - BLOCKLIST_FILE=/app/blocklist/blocklist.txt
       - BLOCKLIST_REFRESH_MIN=${BLOCKLIST_REFRESH_MIN:-60}
     volumes:
       # Live pflegbar: editieren -> 'docker compose up -d --force-recreate agent'.
       - ./agent/trust_domains.txt:/app/trust_domains.txt:ro
+      - blocklist-data:/app/blocklist:ro   # nur lesen; Egress macht der Sidecar
     networks:
       - aistack-core
       - aistack-sandbox
@@ -433,6 +435,42 @@ services:
       - qdrant
       - presidio-proxy
       - code-sandbox
+
+  # ============ AUTO-BLOCKLIST FETCHER (einziger Egress-Container) ===========
+  #  Holt die Blocklist EXTERN und legt sie ins Volume; der agent LIEST nur die
+  #  Datei -> agent bleibt OHNE Internet-Egress (PII/DSGVO: kein User-Datenpfad
+  #  nach draussen). Opt-in: Profil "blocklist" + BLOCKLIST_URL in der .env.
+  #  KEINE internen Netze (aistack-*) -> der Sidecar kann NUR den oeffentlichen
+  #  URL ziehen + ins Volume schreiben, erreicht KEINE Stack-Dienste/PII.
+  blocklist-fetcher:
+    image: curlimages/curl:latest
+    container_name: blocklist_fetcher
+    profiles: ["blocklist"]
+    restart: unless-stopped
+    user: "0:0"   # darf das Volume schreiben (isolierter Single-Purpose-Container)
+    environment:
+      - BLOCKLIST_URL=${BLOCKLIST_URL:-}
+      - BLOCKLIST_REFRESH_MIN=${BLOCKLIST_REFRESH_MIN:-60}
+    volumes:
+      - blocklist-data:/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -u
+        while true; do
+          if [ -n "$${BLOCKLIST_URL:-}" ]; then
+            echo "[blocklist] hole $$BLOCKLIST_URL ..."
+            if curl -fsSL --max-time 60 "$$BLOCKLIST_URL" -o /data/blocklist.txt.tmp; then
+              mv -f /data/blocklist.txt.tmp /data/blocklist.txt
+              echo "[blocklist] ok: $$(wc -l < /data/blocklist.txt) Zeilen"
+            else
+              echo "[blocklist] Fetch fehlgeschlagen (alte Liste bleibt)"; rm -f /data/blocklist.txt.tmp
+            fi
+          else
+            echo "[blocklist] kein BLOCKLIST_URL -> idle"
+          fi
+          sleep $$(( $${BLOCKLIST_REFRESH_MIN:-60} * 60 ))
+        done
 
   # ===================== 8b) INGEST-ROUTER (Upload-Weiche) ==================
   #  Klassifiziert hochgeladene Dateien und leitet sie ans richtige RAG-Backend:
@@ -728,6 +766,7 @@ volumes:
   ocu-pg-data:
   morphik-pg-data:
   morphik-storage:
+  blocklist-data:   # vom blocklist-fetcher-Sidecar gepflegt, vom agent nur gelesen
 
 networks:
   # Eigene, von DIESEM Compose erzeugte Netze:

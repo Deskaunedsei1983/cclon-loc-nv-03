@@ -40,7 +40,10 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", "not-needed")
 # (main-gemma) unterstuetzt KEINE structured outputs -> 400 ValueError. Darum
 # laeuft mem0 per Default auf dem autoregressiven Helfer (qwen-helper); per ENV
 # umstellbar (z.B. auf main, wenn das Hauptmodell autoregressiv ist).
-MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", "http://vllm-helper:30001/v1")
+# mem0 braucht JSON/structured outputs. 'auto' (Default): Helfer bevorzugt, sonst
+# autoregressives Hauptmodell (Gemma-Diffusion wird uebersprungen), sonst aus.
+# Feste Wahl moeglich: MEM0_LLM_BASE_URL=http://vllm-helper:30001/v1 + MEM0_LLM_MODEL.
+MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", "auto")
 MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "qwen-helper")
 # Memory hart abschaltbar; sonst auto-deaktiviert, wenn das MEM0-LLM nicht erreichbar ist.
 MEM0_ENABLED = os.environ.get("MEM0_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
@@ -112,11 +115,11 @@ _TRUST_MAP = _load_trust()
 log.info("Trust-Liste geladen: %d Domains (%s)", len(_TRUST_MAP), TRUST_DOMAINS_FILE)
 
 
-# --- Auto-Blocklist (low-Tier, stuendlich; OPT-IN via BLOCKLIST_URL) ---------
-# Ergaenzt den 'low'-Tier um eine externe, gepflegte Domainliste (Ads/Malware/Spam).
-# Kuratierte _TRUST_MAP-Eintraege haben VORRANG (explizit Vertrautes wird nie demoted).
-# ACHTUNG: braucht Internet-Egress fuer den agent-Container.
-BLOCKLIST_URL = os.environ.get("BLOCKLIST_URL", "").strip()
+# --- Auto-Blocklist (low-Tier) ----------------------------------------------
+# Der Agent LIEST nur eine Datei (vom 'blocklist-fetcher'-Sidecar gepflegt) -> KEIN
+# Internet-Egress im Agent (PII/DSGVO: kein User-Datenpfad nach draussen). Kuratierte
+# _TRUST_MAP-Eintraege haben VORRANG (explizit Vertrautes wird nie demoted).
+BLOCKLIST_FILE = os.environ.get("BLOCKLIST_FILE", "/app/blocklist/blocklist.txt")
 BLOCKLIST_REFRESH_MIN = int(os.environ.get("BLOCKLIST_REFRESH_MIN", "60"))
 _BLOCKLIST: "set[str]" = set()
 
@@ -140,19 +143,19 @@ def _parse_blocklist(text: str) -> "set[str]":
     return out
 
 
-async def refresh_blocklist() -> None:
-    """Holt BLOCKLIST_URL und ersetzt _BLOCKLIST. Fehler -> alte Liste bleibt."""
+def load_blocklist() -> int:
+    """Liest die vom 'blocklist-fetcher'-Sidecar gepflegte Datei (KEIN Netzzugriff
+    im Agent). Fehlt sie -> leere Liste. Wird periodisch neu gelesen."""
     global _BLOCKLIST
-    if not BLOCKLIST_URL:
-        return
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            r = await http.get(BLOCKLIST_URL)
-            r.raise_for_status()
-        _BLOCKLIST = _parse_blocklist(r.text)
-        log.info("Blocklist aktualisiert: %d Domains (%s)", len(_BLOCKLIST), BLOCKLIST_URL)
+        with open(BLOCKLIST_FILE, encoding="utf-8", errors="ignore") as f:
+            _BLOCKLIST = _parse_blocklist(f.read())
+        log.info("Blocklist geladen: %d Domains (%s)", len(_BLOCKLIST), BLOCKLIST_FILE)
+    except FileNotFoundError:
+        _BLOCKLIST = set()
     except Exception as e:
-        log.warning("Blocklist-Fetch fehlgeschlagen (%s): %s", BLOCKLIST_URL, e)
+        log.warning("Blocklist-Datei nicht lesbar (%s): %s", BLOCKLIST_FILE, e)
+    return len(_BLOCKLIST)
 
 
 def domain_trust(dom: str):
@@ -240,31 +243,48 @@ def system_prompt_now() -> str:
 
 
 # --- Mem0 -------------------------------------------------------------------
-def _endpoint_reachable(base_url: str) -> bool:
-    """True, wenn der Host antwortet (auch 4xx zaehlt). Nur DNS/Connect-Fehler -> False."""
+def _models_list(base_url: str):
+    """Liste der model-ids von /v1/models, oder None bei DNS/Connect-Fehler."""
     try:
-        httpx.get(base_url.rstrip("/") + "/models", timeout=3.0)
-        return True
+        r = httpx.get(base_url.rstrip("/") + "/models", timeout=3.0)
+        r.raise_for_status()
+        return [m.get("id", "") for m in r.json().get("data", [])]
     except Exception:
-        return False
+        return None
+
+
+def _pick_mem0_llm():
+    """(base_url, model) fuer mem0 ODER None. mem0 braucht JSON/structured outputs.
+    'auto': Helfer bevorzugt (leicht + JSON-faehig); sonst das aktive Hauptmodell,
+    ABER nur wenn autoregressiv (Gemma-Diffusion kann kein JSON -> an den served-
+    model-names erkannt). Explizite MEM0_LLM_BASE_URL hat Vorrang."""
+    if MEM0_LLM_BASE_URL and MEM0_LLM_BASE_URL.lower() != "auto":
+        return MEM0_LLM_BASE_URL, MEM0_LLM_MODEL
+    helper = "http://vllm-helper:30001/v1"
+    if _models_list(helper) is not None:
+        return helper, "qwen-helper"
+    ids = _models_list(LLM_BASE_URL)
+    if ids is not None and not any("gemma" in i.lower() for i in ids):
+        return LLM_BASE_URL, LLM_MODEL  # autoregressives Hauptmodell ("main")
+    return None
 
 
 def build_memory():
     if not MEM0_ENABLED:
         log.info("Mem0 deaktiviert (MEM0_ENABLED=false) -> ohne Gedaechtnis.")
         return None
-    if not _endpoint_reachable(MEM0_LLM_BASE_URL):
-        log.warning("Mem0-LLM nicht erreichbar (%s; Helfer aus?) -> Memory deaktiviert. "
-                    "Helfer einschalten ODER MEM0_LLM_BASE_URL/MODEL auf ein erreichbares, "
-                    "autoregressives Modell setzen.", MEM0_LLM_BASE_URL)
+    picked = _pick_mem0_llm()
+    if picked is None:
+        log.warning("Mem0: kein JSON-faehiges LLM erreichbar (Helfer aus UND Hauptmodell "
+                    "diffusionsbasiert/aus?) -> Memory deaktiviert.")
         return None
+    mem_url, mem_model = picked
+    log.info("Mem0-LLM gewaehlt: %s (%s)", mem_model, mem_url)
     from mem0 import Memory
     config = {
         "llm": {"provider": "openai", "config": {
-            # NICHT das (evtl. diffusionsbasierte) Hauptmodell: mem0 fordert JSON.
-            "model": MEM0_LLM_MODEL, "openai_base_url": MEM0_LLM_BASE_URL,
-            # top_p explizit: mem0/vLLM-Default 0.0 -> vLLM lehnt ab
-            # ("top_p must be in (0, 1]") -> Mem0-Add schlug fehl.
+            "model": mem_model, "openai_base_url": mem_url,
+            # top_p explizit: mem0/vLLM-Default 0.0 -> vLLM lehnt ab ("must be in (0,1]").
             "api_key": LLM_API_KEY, "temperature": 0.1, "top_p": 1.0}},
         "embedder": {"provider": "openai", "config": {
             "model": EMBED_MODEL, "openai_base_url": EMBED_BASE_URL,
