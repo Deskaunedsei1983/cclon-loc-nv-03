@@ -35,6 +35,13 @@ LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://vllm-main:5568/v1")
 LLM_MODEL = os.environ.get("LLM_MODEL", "main")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "not-needed")
 
+# Mem0-Faktenextraktion braucht STRUKTURIERTE Ausgaben (JSON). DiffusionGemma
+# (main-gemma) unterstuetzt KEINE structured outputs -> 400 ValueError. Darum
+# laeuft mem0 per Default auf dem autoregressiven Helfer (qwen-helper); per ENV
+# umstellbar (z.B. auf main, wenn das Hauptmodell autoregressiv ist).
+MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", "http://vllm-helper:30001/v1")
+MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "qwen-helper")
+
 EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "http://embeddings:80/v1")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
 EMBED_DIMS = int(os.environ.get("EMBED_DIMS", "1024"))
@@ -117,7 +124,7 @@ def now_context() -> str:
         "dieses Jahr, 'vor 10 Jahren', 'ist X schon vorbei') von DIESEM Zeitpunkt "
         "aus; nutze NICHT dein Trainingswissen als 'jetzt'. Bei laufenden oder "
         "kuerzlich gestarteten Ereignissen NICHT annehmen, etwas habe noch nicht "
-        "stattgefunden -> den Live-Stand per 'search_web' pruefen."
+        "stattgefunden; fehlende Live-Daten als offen/ungeprueft kennzeichnen."
     )
 
 
@@ -132,7 +139,8 @@ def build_memory():
     from mem0 import Memory
     config = {
         "llm": {"provider": "openai", "config": {
-            "model": LLM_MODEL, "openai_base_url": LLM_BASE_URL,
+            # NICHT das (evtl. diffusionsbasierte) Hauptmodell: mem0 fordert JSON.
+            "model": MEM0_LLM_MODEL, "openai_base_url": MEM0_LLM_BASE_URL,
             # top_p explizit: mem0/vLLM-Default 0.0 -> vLLM lehnt ab
             # ("top_p must be in (0, 1]") -> Mem0-Add schlug fehl.
             "api_key": LLM_API_KEY, "temperature": 0.1, "top_p": 1.0}},

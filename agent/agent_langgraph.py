@@ -34,6 +34,32 @@ _LIST_MARK = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")  # nur Listenmarker, KEIN
 MAX_ITER = int(os.environ.get("VERIFY_MAX_ITER", "3"))
 VERIFY_MAX_QUERIES = int(os.environ.get("VERIFY_MAX_QUERIES", "3"))
 
+# Diese Variante orchestriert Retrieval/Web/Code SELBST -> das Modell darf KEINE
+# Tools aufrufen (sonst leakt z.B. gemma tool_call-Syntax in die Antwort). Eigener
+# System-Prompt OHNE Tool-Aufruf-Framing (der geteilte C.SYSTEM_PROMPT ist
+# tool-zentriert und nur fuer die pydantic-Variante gedacht).
+_SYS_ORCHESTRATED = (
+    "Du bist ein praeziser Engineering-Assistent fuer einen oesterreichischen "
+    "Daten-Ingenieur (Sozialversicherung). Antworte auf Deutsch, knapp und konkret.\n"
+    "WICHTIG: Rufe KEINE Tools/Funktionen auf und gib KEINE tool_call-/Funktions-Syntax "
+    "aus. Die RAG-Belege sind unten bereits beigefuegt; eine Web-Gegenpruefung laeuft "
+    "AUTOMATISCH nach deinem Entwurf (du musst nichts 'suchen'). Gruende die Antwort auf "
+    "die beigefuegten Belege und die spaeter eingearbeiteten Web-Befunde, erfinde nichts. "
+    "Brauchst du eine Berechnung/Datei, gib GENAU EINEN ```python ...``` Block aus (wird in "
+    "der Sandbox ausgefuehrt). Nenne am Ende Quellen + erzeugte Dateinamen."
+)
+
+# Schutznetz: falls das Modell doch tool_call-Syntax emittiert, aus der sichtbaren
+# Antwort entfernen (beobachtet bei gemma: '<|tool_call>call:...(...)<tool_call|>').
+_TOOLCALL_RE = re.compile(r"<\|?\s*tool_call\s*\|?>.*?<\|?\s*/?\s*tool_call\s*\|?>",
+                          re.DOTALL | re.IGNORECASE)
+
+
+def _strip_toolcalls(text: str) -> str:
+    t = _TOOLCALL_RE.sub("", text or "")
+    t = re.sub(r"<\|?\s*/?\s*tool_call\s*\|?>", "", t, flags=re.IGNORECASE)  # einzelne Reste
+    return t.strip()
+
 
 class State(TypedDict, total=False):
     query: str
@@ -77,9 +103,10 @@ async def draft(state: State) -> State:
         parts.append(f"\nVoriger Entwurf:\n{state.get('draft','')}")
     parts.append("\nBrauchst du eine Berechnung/Datei, gib EINEN ```python ...``` Block aus; "
                  "er wird in der Sandbox ausgefuehrt.")
-    resp = await _llm.ainvoke([{"role": "system", "content": C.system_prompt_now()},
+    sys = _SYS_ORCHESTRATED + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context()
+    resp = await _llm.ainvoke([{"role": "system", "content": sys},
                                {"role": "user", "content": "\n".join(parts)}])
-    return {"draft": resp.content, "iteration": state.get("iteration", 0) + 1}
+    return {"draft": _strip_toolcalls(resp.content), "iteration": state.get("iteration", 0) + 1}
 
 
 async def execute(state: State) -> State:
