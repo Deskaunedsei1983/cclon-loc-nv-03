@@ -9,9 +9,12 @@ import os
 import time
 import json
 import uuid
+import asyncio
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+import common as C
 
 IMPL = os.environ.get("AGENT_IMPL", "pydantic").lower()
 if IMPL == "pydantic":
@@ -28,6 +31,21 @@ else:
 
 app = FastAPI(title="research-agent (OpenAI-compatible)")
 MODEL_ID = "research-agent"
+
+
+@app.on_event("startup")
+async def _start_blocklist_refresh():
+    """OPT-IN: nur wenn BLOCKLIST_URL gesetzt ist -> stuendlicher Domain-Abgleich
+    (sofort + alle BLOCKLIST_REFRESH_MIN Minuten) in den low-Tier."""
+    if not getattr(C, "BLOCKLIST_URL", ""):
+        return
+
+    async def _loop():
+        while True:
+            await C.refresh_blocklist()
+            await asyncio.sleep(max(5, C.BLOCKLIST_REFRESH_MIN) * 60)
+
+    asyncio.create_task(_loop())
 
 
 @app.get("/v1/models")

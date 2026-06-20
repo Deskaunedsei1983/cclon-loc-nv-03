@@ -411,6 +411,15 @@ services:
       - TRUST_DOMAINS_FILE=/app/trust_domains.txt
       - TRUST_DOMAINS=${TRUST_DOMAINS:-}
       - LOW_TRUST_DOMAINS=${LOW_TRUST_DOMAINS:-}
+      # Mem0 (Memory) laeuft auf MEM0_LLM (Default Helfer). Helfer AUS -> Memory
+      # deaktiviert sich automatisch + leise. Hart aus: MEM0_ENABLED=false.
+      - MEM0_ENABLED=${MEM0_ENABLED:-true}
+      - MEM0_LLM_BASE_URL=${MEM0_LLM_BASE_URL:-http://vllm-helper:30001/v1}
+      - MEM0_LLM_MODEL=${MEM0_LLM_MODEL:-qwen-helper}
+      # Auto-Blocklist (low-Tier), OPT-IN: URL setzen aktiviert den stuendlichen
+      # Abgleich. ACHTUNG: braucht Internet-Egress fuer den agent-Container.
+      - BLOCKLIST_URL=${BLOCKLIST_URL:-}
+      - BLOCKLIST_REFRESH_MIN=${BLOCKLIST_REFRESH_MIN:-60}
     volumes:
       # Live pflegbar: editieren -> 'docker compose up -d --force-recreate agent'.
       - ./agent/trust_domains.txt:/app/trust_domains.txt:ro

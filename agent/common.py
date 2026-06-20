@@ -42,6 +42,8 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", "not-needed")
 # umstellbar (z.B. auf main, wenn das Hauptmodell autoregressiv ist).
 MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", "http://vllm-helper:30001/v1")
 MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "qwen-helper")
+# Memory hart abschaltbar; sonst auto-deaktiviert, wenn das MEM0-LLM nicht erreichbar ist.
+MEM0_ENABLED = os.environ.get("MEM0_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
 
 EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "http://embeddings:80/v1")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
@@ -110,15 +112,62 @@ _TRUST_MAP = _load_trust()
 log.info("Trust-Liste geladen: %d Domains (%s)", len(_TRUST_MAP), TRUST_DOMAINS_FILE)
 
 
+# --- Auto-Blocklist (low-Tier, stuendlich; OPT-IN via BLOCKLIST_URL) ---------
+# Ergaenzt den 'low'-Tier um eine externe, gepflegte Domainliste (Ads/Malware/Spam).
+# Kuratierte _TRUST_MAP-Eintraege haben VORRANG (explizit Vertrautes wird nie demoted).
+# ACHTUNG: braucht Internet-Egress fuer den agent-Container.
+BLOCKLIST_URL = os.environ.get("BLOCKLIST_URL", "").strip()
+BLOCKLIST_REFRESH_MIN = int(os.environ.get("BLOCKLIST_REFRESH_MIN", "60"))
+_BLOCKLIST: "set[str]" = set()
+
+
+def _in_blocklist(dom: str) -> bool:
+    if not _BLOCKLIST:
+        return False
+    parts = dom.split(".")
+    return any(".".join(parts[i:]) in _BLOCKLIST for i in range(len(parts) - 1))
+
+
+def _parse_blocklist(text: str) -> "set[str]":
+    out: "set[str]" = set()
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        dom = line.split()[-1].lower().strip(".")  # hosts "0.0.0.0 domain" ODER "domain"
+        if dom and "." in dom and not dom.replace(".", "").isdigit() and dom != "localhost":
+            out.add(dom)
+    return out
+
+
+async def refresh_blocklist() -> None:
+    """Holt BLOCKLIST_URL und ersetzt _BLOCKLIST. Fehler -> alte Liste bleibt."""
+    global _BLOCKLIST
+    if not BLOCKLIST_URL:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(BLOCKLIST_URL)
+            r.raise_for_status()
+        _BLOCKLIST = _parse_blocklist(r.text)
+        log.info("Blocklist aktualisiert: %d Domains (%s)", len(_BLOCKLIST), BLOCKLIST_URL)
+    except Exception as e:
+        log.warning("Blocklist-Fetch fehlgeschlagen (%s): %s", BLOCKLIST_URL, e)
+
+
 def domain_trust(dom: str):
-    """(tier, topics) — tier in trusted|low|neutral. Spezifischster (laengster)
-    Treffer gewinnt; Subdomains matchen den Parent."""
+    """(tier, topics) — tier in trusted|low|neutral. Kuratierte Liste hat Vorrang,
+    dann die Auto-Blocklist (low). Spezifischster Treffer gewinnt; Subdomains erben."""
     dom = (dom or "").lower().lstrip(".")
-    best_key, best_val = "", ("neutral", frozenset())
+    best_key, best_val = "", None
     for entry, val in _TRUST_MAP.items():
         if (dom == entry or dom.endswith("." + entry)) and len(entry) > len(best_key):
             best_key, best_val = entry, val
-    return best_val
+    if best_val is not None:
+        return best_val
+    if _in_blocklist(dom):
+        return ("low", frozenset({"*"}))
+    return ("neutral", frozenset())
 SANDBOX_RUN_URL = os.environ.get("SANDBOX_RUN_URL", "http://code-sandbox:8000/run")
 # microVM-Executor (Microsandbox). Default: Host-Dienst via host.docker.internal.
 # Container-Variante: http://microsandbox-executor:8077/run
@@ -191,7 +240,24 @@ def system_prompt_now() -> str:
 
 
 # --- Mem0 -------------------------------------------------------------------
+def _endpoint_reachable(base_url: str) -> bool:
+    """True, wenn der Host antwortet (auch 4xx zaehlt). Nur DNS/Connect-Fehler -> False."""
+    try:
+        httpx.get(base_url.rstrip("/") + "/models", timeout=3.0)
+        return True
+    except Exception:
+        return False
+
+
 def build_memory():
+    if not MEM0_ENABLED:
+        log.info("Mem0 deaktiviert (MEM0_ENABLED=false) -> ohne Gedaechtnis.")
+        return None
+    if not _endpoint_reachable(MEM0_LLM_BASE_URL):
+        log.warning("Mem0-LLM nicht erreichbar (%s; Helfer aus?) -> Memory deaktiviert. "
+                    "Helfer einschalten ODER MEM0_LLM_BASE_URL/MODEL auf ein erreichbares, "
+                    "autoregressives Modell setzen.", MEM0_LLM_BASE_URL)
+        return None
     from mem0 import Memory
     config = {
         "llm": {"provider": "openai", "config": {
@@ -227,8 +293,8 @@ def mem_search(memory, query: str, user_id: str) -> str:
         facts = [h.get("memory", "") for h in items][:5]
         if facts:
             return "Bekanntes aus frueheren Sitzungen:\n- " + "\n- ".join(facts) + "\n\n"
-    except Exception:
-        log.exception("Mem0-Suche fehlgeschlagen (ignoriert)")
+    except Exception as e:
+        log.warning("Mem0-Suche fehlgeschlagen (ignoriert): %s", e)
     return ""
 
 
@@ -239,8 +305,8 @@ def mem_add(memory, query: str, answer: str, user_id: str) -> None:
         memory.add(messages=[{"role": "user", "content": query},
                              {"role": "assistant", "content": answer}],
                    user_id=user_id)
-    except Exception:
-        log.exception("Mem0-Add fehlgeschlagen (ignoriert)")
+    except Exception as e:
+        log.warning("Mem0-Add fehlgeschlagen (ignoriert): %s", e)
 
 
 def extract_query(messages: list[dict]) -> str:
