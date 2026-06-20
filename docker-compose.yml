@@ -99,11 +99,8 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-      - VLLM_USE_V2_MODEL_RUNNER=1 # vom Modell verlangt
-      # Attention-Backend als Env (auf diesem Image erprobt) == Model-Card "--attention-backend TRITON_ATTN":
-      - VLLM_ATTENTION_BACKEND=TRITON_ATTN
-      # SM120/Blackwell FP4-MoE-Kernel — nur falls das Diffusionsmodell ihn unterstuetzt:
-      # - VLLM_USE_FLASHINFER_MOE_FP4=1
+      - VLLM_USE_V2_MODEL_RUNNER=1 # Model-Card: erforderlich (Diffusions-Modell-Runner)
+      # Attention kommt als CLI-Flag (--attention-backend TRITON_ATTN), exakt wie im Card.
       # - HF_HUB_OFFLINE=1                   # nach erstem Download aktivieren
     deploy:
       resources:
@@ -112,27 +109,25 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # An SM120/Blackwell + 256k-Kontext + VRAM-Sparsamkeit angepasst:
-    #  - 256k Kontext        : --max-model-len 262144
-    #  - sparsam wie bisher  : --gpu-memory-utilization 0.35 (Modell kleiner als Qwen
-    #                          -> bei Bedarf auf 0.30 senken), --max-num-seqs 2
-    #                          (Model-Card nennt 4; bewusst niedriger -> keine
-    #                          Multi-Request-/VRAM-Ueberbelegung, "wie bisher")
-    #  - Diffusion           : --override-generation-config max_new_tokens=null (Model-Card)
-    #  - NVFP4 wird i.d.R. autom. erkannt; sonst  --quantization modelopt  ergaenzen.
-    #  ENTFERNT: --default-chat-template-kwargs -> existiert in diesem vLLM-Build NICHT
-    #  (verifiziert gegen Commit ecf9d83, arg_utils.py) -> argparse-Crash beim Start;
-    #  "enable_thinking" ist zudem ein Qwen-, kein Gemma-Chat-Template-Feature.
-    # [VERIFY gegen das (gated) Modellcard, BEVOR main-gemma produktiv laeuft]: Repo-Name,
-    #  ob "gemma4" als reasoning-/tool-call-parser registriert ist, ob VLLM_USE_V2_MODEL_RUNNER
-    #  noetig ist (existiert, default off), korrektes Attention-Backend, und ob dieser
-    #  vLLM-Build dieses DIFFUSIONS-Modell ueberhaupt traegt (Standard-vLLM = autoregressiv).
+    # Flags 1:1 aus dem offiziellen NVIDIA-Modellcard (DiffusionGemma-26B-A4B-IT-NVFP4,
+    # Abschnitt "Usage"): VLLM_USE_V2_MODEL_RUNNER=1 (Env), --attention-backend TRITON_ATTN,
+    # gemma4 reasoning-/tool-call-parser, --override-generation-config max_new_tokens=null
+    # (Diffusions-Sampling stoppt adaptiv, nicht per starrem Limit) und
+    # --default-chat-template-kwargs enable_thinking=true (Reasoning-Modus an).
+    # Alle Flags gegen Commit ecf9d83 verifiziert: --default-chat-template-kwargs/
+    # --tool-call-parser/--enable-auto-tool-choice in entrypoints/openai/cli_args.py,
+    # --attention-backend/--reasoning-parser/--override-generation-config in arg_utils.py.
+    # Eigene VRAM-Drosselung (NICHT im Card): --max-num-seqs 2 (Card nennt 4),
+    # --gpu-memory-utilization 0.35 (bei Bedarf 0.30), --max-model-len 262144 (256k).
+    # Card-Hinweis: bevorzugtes Image ist vllm/vllm-openai:gemma; dein Nightly ecf9d83
+    # laedt das Modell aber bereits (Engine-Log: quantization=modelopt_fp4, gemma4 ok).
     command: >
       nvidia/diffusiongemma-26B-A4B-IT-NVFP4
       --served-model-name gemma-main main
       --host 0.0.0.0
       --port 5568
       --trust-remote-code
+      --attention-backend TRITON_ATTN
       --max-model-len 262144
       --max-num-seqs 2
       --gpu-memory-utilization 0.35
@@ -140,6 +135,7 @@ services:
       --tool-call-parser gemma4
       --reasoning-parser gemma4
       --override-generation-config '{"max_new_tokens":null}'
+      --default-chat-template-kwargs '{"enable_thinking":true}'
     networks:
       aistack-core:
         aliases:
