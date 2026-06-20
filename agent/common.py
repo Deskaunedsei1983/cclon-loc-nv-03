@@ -51,6 +51,11 @@ MEM0_STRUCT_URL = os.environ.get("MEM0_STRUCT_URL", "http://mem0-struct:8088/v1"
 MEM0_STRUCT_MODEL = os.environ.get("MEM0_STRUCT_MODEL", "mem0-struct")
 # Memory hart abschaltbar; sonst auto-deaktiviert, wenn das MEM0-LLM nicht erreichbar ist.
 MEM0_ENABLED = os.environ.get("MEM0_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+# mem0s 2-Call-"Memory-Manager" (infer=True) ist mit kleinen lokalen Modellen fragil
+# (liefert fuer seinen langen Prompt teils leeres JSON -> Add schlaegt fehl, char 0).
+# Default infer=False: robustes Direkt-Speichern der User-Aussage (Embedding -> Qdrant),
+# KEIN 2. LLM-Call. infer=True nur mit einem zuverlaessigen JSON-LLM sinnvoll.
+MEM0_INFER = os.environ.get("MEM0_INFER", "false").strip().lower() in ("1", "true", "yes", "on")
 
 EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "http://embeddings:80/v1")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
@@ -328,9 +333,15 @@ def mem_add(memory, query: str, answer: str, user_id: str) -> None:
     if not memory or not query:
         return
     try:
-        memory.add(messages=[{"role": "user", "content": query},
-                             {"role": "assistant", "content": answer}],
-                   user_id=user_id)
+        if MEM0_INFER:
+            memory.add(messages=[{"role": "user", "content": query},
+                                 {"role": "assistant", "content": answer}],
+                       user_id=user_id)
+        else:
+            # infer=False: KEIN fragiler 2-Call-Memory-Manager. Speichert die
+            # User-Aussage direkt (Embedding -> Qdrant), robust + deterministisch.
+            memory.add(messages=[{"role": "user", "content": query}],
+                       user_id=user_id, infer=False)
     except Exception as e:
         log.warning("Mem0-Add fehlgeschlagen (ignoriert): %s", e)
 
