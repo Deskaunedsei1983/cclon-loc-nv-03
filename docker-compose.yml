@@ -77,6 +77,60 @@ services:
     networks:
       - aistack-core
 
+  # ===================== 1c) HAUPT-LLM C: QWEN OHNE MTP =====================
+  #  Wie (1a) main-qwen, ABER OHNE Speculative Decoding (MTP). Langsamer beim
+  #  Chat, dafuer SAUBERES Structured Output (response_format) -> noetig fuer
+  #  mem0 infer=true: MTP x guided decoding erzeugt sonst kaputtes JSON
+  #  (z.B. '{"memory{"memory":...'). Auswahl: COMPOSE_PROFILES=main-qwen-plain.
+  #  Alias "vllm-main" + served-model-name "main" -> Agent/OWUI/RAGFlow unveraendert.
+  vllm-main-qwen-plain:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly}
+    container_name: vllm_main_qwen_plain
+    profiles: ["main-qwen-plain"]
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "5568:5568"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_USE_FLASHINFER_MOE_FP4=1
+      - VLLM_ATTENTION_BACKEND=FLASHINFER
+      # - HF_HUB_OFFLINE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Identisch zu vllm-main, NUR ohne --speculative-config (kein MTP).
+    command: >
+      nvidia/Qwen3.6-35B-A3B-NVFP4
+      --served-model-name qwen-main main
+      --host 0.0.0.0
+      --port 5568
+      --trust-remote-code
+      --quantization modelopt
+      --max-model-len "260000"
+      --kv-cache-dtype fp8
+      --max-num-seqs 2
+      --gpu-memory-utilization 0.35
+      --enable-chunked-prefill
+      --max-num-batched-tokens 8192
+      --reasoning-parser qwen3
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
+    networks:
+      aistack-core:
+        aliases:
+          - vllm-main
+
   # ===================== 1b) HAUPT-LLM B: GEMMA-DIFFUSION (NVFP4, SM120) ====
   #  ALTERNATIVE zu (1a). Auswahl in der .env:  COMPOSE_PROFILES=main-gemma
   #  Diffusions-LLM (nicht-autoregressiv) -> bewusst NUR die vom Modell

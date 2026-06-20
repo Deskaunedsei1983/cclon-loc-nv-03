@@ -85,17 +85,19 @@ fi
 #  --profile vereinigt oder ueberschreibt, das Hauptmodell startet zuverlaessig.
 ENV_PROFILES=""
 [ -f .env ] && ENV_PROFILES="$(grep -E '^[[:space:]]*COMPOSE_PROFILES=' .env | tail -n1 | cut -d= -f2- | tr -d "\"' ")"
-has_qwen=0; has_gemma=0
-case ",$ENV_PROFILES," in *,main-qwen,*)  has_qwen=1  ;; esac
-case ",$ENV_PROFILES," in *,main-gemma,*) has_gemma=1 ;; esac
-if [ "$has_qwen" = 1 ] && [ "$has_gemma" = 1 ]; then
-  echo "FEHLER: In .env sind BEIDE Hauptmodelle aktiv (main-qwen UND main-gemma)."
-  echo "        Bitte genau EINES waehlen (sonst doppelter VRAM-Verbrauch). Abbruch."
+has_qwen=0; has_qwen_plain=0; has_gemma=0
+case ",$ENV_PROFILES," in *,main-qwen,*)       has_qwen=1       ;; esac
+case ",$ENV_PROFILES," in *,main-qwen-plain,*) has_qwen_plain=1 ;; esac
+case ",$ENV_PROFILES," in *,main-gemma,*)      has_gemma=1      ;; esac
+if [ $((has_qwen + has_qwen_plain + has_gemma)) -gt 1 ]; then
+  echo "FEHLER: Mehr als EIN Hauptmodell in COMPOSE_PROFILES"
+  echo "        (main-qwen | main-qwen-plain | main-gemma). Genau EINES waehlen. Abbruch."
   exit 1
 fi
 MAIN_PROFILE="main-qwen"
+[ "$has_qwen_plain" = 1 ] && MAIN_PROFILE="main-qwen-plain"
 [ "$has_gemma" = 1 ] && MAIN_PROFILE="main-gemma"
-[ "$has_qwen" = 0 ] && [ "$has_gemma" = 0 ] && \
+[ $((has_qwen + has_qwen_plain + has_gemma)) -eq 0 ] && \
   echo "   ! Kein Hauptmodell in .env (COMPOSE_PROFILES) -> Default: main-qwen"
 echo "   + Hauptmodell-Profil: $MAIN_PROFILE"
 MAIN_PROFILE_ARGS=(--profile "$MAIN_PROFILE")
@@ -143,7 +145,9 @@ wait_health() {  # wait_health <url> <name> <max_min>
 
 if [ "$SERIAL_GPU_LOAD" = "1" ]; then
   echo ">> Serielles GPU-Laden AN (kein gestapelter Lade-Peak). Aus: SERIAL_GPU_LOAD=0 ./start.sh"
-  MAIN_SVC="vllm-main"; [ "$has_gemma" = 1 ] && MAIN_SVC="vllm-main-gemma"
+  MAIN_SVC="vllm-main"
+  [ "$has_qwen_plain" = 1 ] && MAIN_SVC="vllm-main-qwen-plain"
+  [ "$has_gemma" = 1 ] && MAIN_SVC="vllm-main-gemma"
   echo ">> [seriell 1/4] Hauptmodell ($MAIN_SVC)"
   retry 3 dc up -d --no-deps "$MAIN_SVC";  wait_health "http://localhost:5568/health" "vLLM main" 30
   echo ">> [seriell 2/4] Mem0-Embedder (TEI bge-m3)"
