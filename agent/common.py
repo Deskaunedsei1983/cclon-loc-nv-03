@@ -489,6 +489,13 @@ def _owui_file_refs(body: dict) -> list:
                      "name": inner.get("filename") or inner.get("name") or meta.get("name") or fid,
                      "path": inner.get("path") or f.get("path"),
                      "content_type": meta.get("content_type") or inner.get("content_type") or ""})
+    # Fallback: File-ID aus dem RAG-Kontext der Nachrichten (<source ... resource-id="...">).
+    for m in body.get("messages") or []:
+        c = m.get("content") if isinstance(m, dict) else None
+        for rid in re.findall(r'resource-id="([0-9a-fA-F-]{8,})"', str(c or "")):
+            if rid not in seen:
+                seen.add(rid)
+                refs.append({"id": rid, "name": "", "path": None, "content_type": ""})
     return refs
 
 
@@ -568,11 +575,14 @@ def read_full_document(body: dict):
     except Exception as e:
         log.warning("Volltext: %s nicht lesbar: %s", lp, e)
         return None
-    text = file_to_text(ref["name"], ref["content_type"], data)
+    name = ref["name"] or os.path.basename(lp)
+    if name.startswith(ref["id"] + "_"):       # OWUI-Praefix {id}_ entfernen
+        name = name[len(ref["id"]) + 1:]
+    text = file_to_text(name, ref["content_type"], data)
     if not text or not text.strip():
         return None
-    log.info("Volltext geladen: %s (%d Zeichen)", ref["name"], len(text))
-    return ref["name"], text
+    log.info("Volltext geladen: %s (%d Zeichen)", name, len(text))
+    return name, text
 
 
 # --- Code-Sandbox -----------------------------------------------------------
