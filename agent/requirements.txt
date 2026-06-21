@@ -23,3 +23,6 @@ qdrant-client==1.12.1
 
 # Morphik-Auth: selbst signierter HS256-JWT (sonst 401 "Not enough segments")
 PyJWT==2.10.1
+
+# Volltext-Modus: PDF-Parsing (epub/docx/txt/html laufen ueber die Standardbibliothek).
+pypdf==5.1.0

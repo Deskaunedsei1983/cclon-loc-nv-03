@@ -17,6 +17,12 @@ from __future__ import annotations
 import os
 import logging
 import datetime
+import base64
+import glob
+import html
+import io
+import re
+import zipfile
 from urllib.parse import urlparse
 
 import httpx
@@ -184,6 +190,11 @@ SANDBOX_RUN_URL = os.environ.get("SANDBOX_RUN_URL", "http://code-sandbox:8000/ru
 # microVM-Executor (Microsandbox). Default: Host-Dienst via host.docker.internal.
 # Container-Variante: http://microsandbox-executor:8077/run
 MSB_EXECUTOR_URL = os.environ.get("MSB_EXECUTOR_URL", "http://host.docker.internal:8077/run")
+
+# Volltext-Modus: OWUIs Upload-Volume read-only gemountet -> ganze Dateien lesbar
+# (umgeht den OWUI-0.9.5-401). OWUI legt Uploads unter <data>/uploads/{id}_{name} ab.
+OWUI_DATA_DIR = os.environ.get("OWUI_DATA_DIR", "/owui-data")
+FULLDOC_MAX_BYTES = int(os.environ.get("FULLDOC_MAX_BYTES", str(30 * 1024 * 1024)))
 
 SYSTEM_PROMPT = """Du bist ein praeziser Engineering-Assistent fuer einen
 oesterreichischen Daten-Ingenieur (Sozialversicherungs-Domaene). Antworte auf
@@ -451,18 +462,140 @@ async def t_search_web(http: httpx.AsyncClient, query: str) -> str:
         return f"Such-Fehler: {e}"
 
 
-async def _post_run(http: httpx.AsyncClient, url: str, code: str) -> dict:
-    r = await http.post(url, json={"code": code}, timeout=180.0)
+# --- Volltext: OWUI-Upload lesen + zu Text parsen ---------------------------
+_OWUI_PREFIX = "/app/backend/data"  # OWUI-interner Datenpfad (im Volume)
+
+
+def _owui_file_refs(body: dict) -> list:
+    """Datei-Referenzen aus dem OWUI-Request einsammeln (mehrere Formen)."""
+    if not isinstance(body, dict):
+        return []
+    cand = list(body.get("files") or [])
+    cand += (body.get("metadata") or {}).get("files") or []
+    for m in body.get("messages") or []:
+        if isinstance(m, dict):
+            cand += m.get("files") or []
+    refs, seen = [], set()
+    for f in cand:
+        if not isinstance(f, dict):
+            continue
+        inner = f.get("file") if isinstance(f.get("file"), dict) else f
+        fid = inner.get("id") or f.get("id")
+        if not fid or fid in seen:
+            continue
+        seen.add(fid)
+        meta = inner.get("meta") or {}
+        refs.append({"id": fid,
+                     "name": inner.get("filename") or inner.get("name") or meta.get("name") or fid,
+                     "path": inner.get("path") or f.get("path"),
+                     "content_type": meta.get("content_type") or inner.get("content_type") or ""})
+    return refs
+
+
+def _owui_local_path(ref: dict):
+    """OWUI-Pfad auf das gemountete Volume mappen; sonst per ID im uploads/-Ordner."""
+    p = ref.get("path")
+    if isinstance(p, str) and p:
+        if p.startswith(_OWUI_PREFIX):
+            cand = OWUI_DATA_DIR.rstrip("/") + p[len(_OWUI_PREFIX):]
+            if os.path.exists(cand):
+                return cand
+        if os.path.exists(p):
+            return p
+    for c in glob.glob(f"{OWUI_DATA_DIR.rstrip('/')}/uploads/{ref['id']}_*"):
+        return c
+    return None
+
+
+def _strip_html(s: str) -> str:
+    s = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", s)
+    s = re.sub(r"(?s)<[^>]+>", " ", s)
+    return re.sub(r"\n{3,}", "\n\n", html.unescape(s))
+
+
+def file_to_text(name: str, ctype: str, data: bytes) -> str:
+    """Datei -> Text. epub/docx/html/txt/md/csv/json via Standardbibliothek, pdf via pypdf."""
+    n = (name or "").lower(); ct = (ctype or "").lower()
+    try:
+        if n.endswith(".epub") or "epub" in ct:
+            parts = []
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                for zi in z.namelist():
+                    if zi.lower().endswith((".xhtml", ".html", ".htm")):
+                        parts.append(_strip_html(z.read(zi).decode("utf-8", "ignore")))
+            return "\n\n".join(parts)
+        if n.endswith(".docx") or "wordprocessingml" in ct:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                xml = z.read("word/document.xml").decode("utf-8", "ignore")
+            return _strip_html(xml.replace("</w:p>", "\n"))
+        if n.endswith(".pdf") or "pdf" in ct:
+            try:
+                import pypdf
+                rd = pypdf.PdfReader(io.BytesIO(data))
+                return "\n".join((pg.extract_text() or "") for pg in rd.pages)
+            except Exception as e:
+                return f"(PDF nicht lesbar: {e})"
+        if n.endswith((".html", ".htm")) or "html" in ct:
+            return _strip_html(data.decode("utf-8", "ignore"))
+        return data.decode("utf-8", "replace")  # txt/md/csv/json/code/...
+    except Exception as e:
+        return f"(Datei nicht parsbar: {e})"
+
+
+def read_full_document(body: dict):
+    """(name, text) der GROESSTEN lesbaren angehaengten Datei oder None. Liest direkt
+    aus dem gemounteten OWUI-Upload-Volume (kein OWUI-API, kein 401)."""
+    best = None
+    for ref in _owui_file_refs(body):
+        lp = _owui_local_path(ref)
+        if not lp:
+            continue
+        try:
+            sz = os.path.getsize(lp)
+        except Exception:
+            continue
+        if sz > FULLDOC_MAX_BYTES:
+            log.warning("Volltext: %s zu gross (%d B) -> uebersprungen", ref["name"], sz)
+            continue
+        if best is None or sz > best[0]:
+            best = (sz, ref, lp)
+    if not best:
+        return None
+    _, ref, lp = best
+    try:
+        with open(lp, "rb") as fh:
+            data = fh.read()
+    except Exception as e:
+        log.warning("Volltext: %s nicht lesbar: %s", lp, e)
+        return None
+    text = file_to_text(ref["name"], ref["content_type"], data)
+    if not text or not text.strip():
+        return None
+    log.info("Volltext geladen: %s (%d Zeichen)", ref["name"], len(text))
+    return ref["name"], text
+
+
+# --- Code-Sandbox -----------------------------------------------------------
+async def _post_run(http: httpx.AsyncClient, url: str, code: str, files: dict | None = None) -> dict:
+    payload = {"code": code}
+    if files:
+        payload["files"] = files
+    r = await http.post(url, json=payload, timeout=180.0)
     r.raise_for_status()
     return r.json()
 
 
-async def t_run_code(http: httpx.AsyncClient, code: str) -> str:
-    """Python ausfuehren — bevorzugt in der Microsandbox-microVM (hardware-isoliert),
-    Fallback auf die luftdichte Subprozess-Sandbox (transparent gekennzeichnet)."""
+_TEXT_OUT = (".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log",
+             ".py", ".xml", ".html", ".ini")
+
+
+async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = None) -> str:
+    """Python ausfuehren. Bei Eingabedateien (Volltext-Modus) direkt die luftdichte
+    Subprozess-Sandbox; sonst bevorzugt die microVM. Erzeugte Text-Dateien (CSV etc.)
+    werden INLINE zurueckgegeben (kopierbar)."""
     engine = "microVM (Microsandbox)"
     res = None
-    if MSB_EXECUTOR_URL:
+    if MSB_EXECUTOR_URL and not files:  # microVM-Pfad nur ohne Eingabedateien
         try:
             res = await _post_run(http, MSB_EXECUTOR_URL, code)
             if res.get("returncode") == -1 and "SDK nicht installiert" in (res.get("stderr") or ""):
@@ -471,15 +604,27 @@ async def t_run_code(http: httpx.AsyncClient, code: str) -> str:
             log.warning("microVM-Executor nicht erreichbar -> Fallback auf Subprozess-Sandbox")
             res = None
     if res is None:
-        engine = "Subprozess-Sandbox (FALLBACK, kein microVM!)"
+        engine = "Subprozess-Sandbox" + (" (Volltext)" if files else " (FALLBACK, kein microVM!)")
         try:
-            res = await _post_run(http, SANDBOX_RUN_URL, code)
+            res = await _post_run(http, SANDBOX_RUN_URL, code, files)
         except Exception as e:
             log.exception("Code-Ausfuehrung fehlgeschlagen")
             return f"Sandbox-Fehler: {e}"
 
-    files = ", ".join(f"{f['name']} ({f['size']}B)" for f in res.get("files", [])) or "keine"
-    return (f"[Engine: {engine}] returncode={res.get('returncode')}\n"
-            f"--- stdout ---\n{res.get('stdout','')}\n"
-            f"--- stderr ---\n{res.get('stderr','')}\n"
-            f"--- Dateien ---\n{files}  (Pfad: {res.get('work_dir','')})")
+    out = [f"[Engine: {engine}] returncode={res.get('returncode')}",
+           f"--- stdout ---\n{res.get('stdout','')}",
+           f"--- stderr ---\n{res.get('stderr','')}"]
+    fl = res.get("files", [])
+    if not fl:
+        out.append("--- Dateien --- keine")
+    for f in fl:
+        nm, sz, b64 = f.get("name", ""), f.get("size", 0), f.get("base64")
+        if b64 and nm.lower().endswith(_TEXT_OUT) and sz <= 100_000:
+            try:
+                content = base64.b64decode(b64).decode("utf-8", "replace")
+            except Exception:
+                content = "(nicht dekodierbar)"
+            out.append(f"--- Datei: {nm} ({sz} B) ---\n{content[:12000]}")
+        else:
+            out.append(f"--- Datei: {nm} ({sz} B) --- (binaer/zu gross; im Sandbox-Volume)")
+    return "\n".join(out)

@@ -495,6 +495,8 @@ services:
       # Maskierte Suche + Sandbox
       - SEARCH_URL=http://presidio-proxy:8080/search
       - SANDBOX_RUN_URL=http://code-sandbox:8000/run
+      # Volltext-Modus: liest ganze OWUI-Uploads aus dem read-only gemounteten Volume.
+      - OWUI_DATA_DIR=/owui-data
       # Domain-Vertrauensliste fuer gewichtete Web-Quoten. Hauptliste = gemountete
       # Datei (unten); .env ergaenzt schnell via TRUST_DOMAINS / LOW_TRUST_DOMAINS.
       - TRUST_DOMAINS_FILE=/app/trust_domains.txt
@@ -520,6 +522,7 @@ services:
       # Live pflegbar: editieren -> 'docker compose up -d --force-recreate agent'.
       - ./agent/trust_domains.txt:/app/trust_domains.txt:ro
       - blocklist-data:/app/blocklist:ro   # nur lesen; Egress macht der Sidecar
+      - open-webui-data:/owui-data:ro      # Volltext-Modus: ganze OWUI-Uploads lesen (kein 401)
     networks:
       - aistack-core
       - aistack-sandbox

@@ -35,6 +35,7 @@ app = FastAPI(title="Code Sandbox /run")
 class RunReq(BaseModel):
     code: str
     timeout: int | None = None
+    files: dict[str, str] | None = None  # {name: base64} -> vor dem Lauf ins run_dir
 
 
 @app.get("/healthz")
@@ -48,6 +49,16 @@ async def run(req: RunReq):
     run_dir = pathlib.Path(tempfile.mkdtemp(prefix="run_", dir=WORK))
     script = run_dir / "snippet.py"
     script.write_text(req.code, encoding="utf-8")
+
+    # Eingabedateien (z.B. Volltext 'document.txt') ins Arbeitsverzeichnis schreiben.
+    input_names = set()
+    for fname, b64 in (req.files or {}).items():
+        safe = pathlib.Path(fname).name  # kein Pfad-Ausbruch
+        try:
+            (run_dir / safe).write_bytes(base64.b64decode(b64))
+            input_names.add(safe)
+        except Exception:
+            pass
 
     t0 = time.time()
     try:
@@ -65,7 +76,7 @@ async def run(req: RunReq):
     # Erzeugte Dateien einsammeln (ausser dem Snippet selbst).
     files = []
     for p in sorted(run_dir.rglob("*")):
-        if p.is_file() and p.name != "snippet.py":
+        if p.is_file() and p.name != "snippet.py" and p.name not in input_names:
             size = p.stat().st_size
             entry = {"name": p.name, "size": size, "path": str(p)}
             if size <= MAX_FILE_BYTES:

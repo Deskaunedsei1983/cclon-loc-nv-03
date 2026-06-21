@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import base64
 from typing import TypedDict
 
 import httpx
@@ -72,6 +73,8 @@ class State(TypedDict, total=False):
     critique: str
     approved: bool
     iteration: int
+    fulltext: str
+    fulldoc_name: str
 
 
 async def gather(state: State) -> State:
@@ -102,6 +105,16 @@ async def draft(state: State) -> State:
     if state.get("critique"):
         parts.append(f"\nVerbessere den vorigen Entwurf gemaess Kritik:\n{state['critique']}")
         parts.append(f"\nVoriger Entwurf:\n{state.get('draft','')}")
+    if state.get("fulltext"):
+        ft = state["fulltext"]
+        parts.append(
+            f"\nVOLLTEXT-MODUS: Die KOMPLETTE Datei '{state.get('fulldoc_name','Dokument')}' "
+            f"({len(ft)} Zeichen) liegt im Sandbox-Arbeitsverzeichnis als 'document.txt'. "
+            f"Fuer Aufgaben ueber das GANZE Dokument (zaehlen, alle Vorkommen, Statistik) "
+            f"NICHT die RAG-Schnipsel nehmen, sondern EINEN ```python-Block schreiben, der "
+            f"open('document.txt', encoding='utf-8').read() verarbeitet, das Ergebnis druckt "
+            f"und bei Bedarf eine CSV im Arbeitsverzeichnis speichert.\n"
+            f"Vorschau (Anfang):\n{ft[:1200]}")
     parts.append("\nBrauchst du eine Berechnung/Datei, gib EINEN ```python ...``` Block aus; "
                  "er wird in der Sandbox ausgefuehrt.")
     sys = _SYS_ORCHESTRATED + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context()
@@ -114,9 +127,13 @@ async def execute(state: State) -> State:
     blocks = CODE_RE.findall(state.get("draft", ""))
     if not blocks:
         return {"exec_out": ""}
+    files = None
+    if state.get("fulltext"):
+        files = {"document.txt": base64.b64encode(
+            state["fulltext"].encode("utf-8")).decode("ascii")}
     async with httpx.AsyncClient() as http:
-        outs = [await C.t_run_code(http, b) for b in blocks[:2]]
-    return {"exec_out": "\n\n".join(outs)[:6000]}
+        outs = [await C.t_run_code(http, b, files=files) for b in blocks[:2]]
+    return {"exec_out": "\n\n".join(outs)[:16000]}
 
 
 _EXTRACT_SYS = (
@@ -235,10 +252,15 @@ def _build():
 _graph = _build()
 
 
-async def run_agent(messages: list[dict], user_id: str = "owui") -> str:
+async def run_agent(messages: list[dict], user_id: str = "owui",
+                    request_body: dict | None = None) -> str:
     query = C.extract_query(messages)
     mem_context = C.mem_search(_memory, query, user_id)
-    final = await _graph.ainvoke({"query": query, "mem_context": mem_context})
+    init: dict = {"query": query, "mem_context": mem_context}
+    doc = C.read_full_document(request_body or {})  # Volltext der angehaengten Datei
+    if doc:
+        init["fulldoc_name"], init["fulltext"] = doc
+    final = await _graph.ainvoke(init)
     answer = final.get("draft", "")
     if final.get("verification"):
         answer += f"\n\n---\nWeb-Gegenpruefung:\n{final['verification']}"

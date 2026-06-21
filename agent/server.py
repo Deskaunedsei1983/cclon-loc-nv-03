@@ -66,7 +66,7 @@ async def chat_completions(request: Request):
     stream = bool(body.get("stream", False))
     user_id = body.get("user") or "owui"
 
-    answer = await run_agent(messages, user_id=user_id)
+    answer = await run_agent(messages, user_id=user_id, request_body=body)
     cid = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
 

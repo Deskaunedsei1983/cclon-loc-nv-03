@@ -63,7 +63,10 @@ def _result_text(result) -> str:
     return getattr(result, "output", None) or getattr(result, "data", None) or str(result)
 
 
-async def run_agent(messages: list[dict], user_id: str = "owui") -> str:
+async def run_agent(messages: list[dict], user_id: str = "owui",
+                    request_body: dict | None = None) -> str:
+    # request_body (OWUI-Anhaenge) wird in dieser Variante noch nicht genutzt
+    # (Volltext-Modus ist in der langgraph-Variante implementiert).
     query = C.extract_query(messages)
     prompt = C.mem_search(_memory, query, user_id) + f"Aktuelle Anfrage:\n{query}"
     async with httpx.AsyncClient() as http:
