@@ -73,13 +73,20 @@ async def chat_completions(request: Request):
     try:
         last = messages[-1].get("content") if (messages and isinstance(messages[-1], dict)) else ""
         _log.info("OWUI-REQ keys=%s | n_msgs=%d | has_files=%s | has_metadata=%s | "
-                  "last_content=%.1800s",
+                  "is_task=%s | last_content=%.1800s",
                   list(body.keys()), len(messages), bool(body.get("files")),
-                  bool(body.get("metadata")), str(last)[:1800])
+                  bool(body.get("metadata")), C.is_owui_task(messages), str(last)[:1800])
     except Exception:
         pass
 
-    answer = await run_agent(messages, user_id=user_id, request_body=body)
+    # OWUI-Hintergrundtasks (Titel/Tags/Query-Generierung, '### Task:') NICHT durch die
+    # Such-/Critic-Pipeline schicken -> 1 LLM-Call, kein RAG/Web/Code. (Eigentlich routet
+    # OWUI die an TASK_MODEL_EXTERNAL=mem0-struct; ist der aus, landen sie hier.)
+    if C.is_owui_task(messages):
+        _log.info("OWUI-Task erkannt -> Passthrough (keine Pipeline).")
+        answer = await C.simple_completion(messages)
+    else:
+        answer = await run_agent(messages, user_id=user_id, request_body=body)
     cid = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
 

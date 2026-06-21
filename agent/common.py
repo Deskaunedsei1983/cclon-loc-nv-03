@@ -22,6 +22,7 @@ import glob
 import html
 import io
 import re
+import time
 import zipfile
 from urllib.parse import urlparse
 
@@ -195,6 +196,9 @@ MSB_EXECUTOR_URL = os.environ.get("MSB_EXECUTOR_URL", "http://host.docker.intern
 # (umgeht den OWUI-0.9.5-401). OWUI legt Uploads unter <data>/uploads/{id}_{name} ab.
 OWUI_DATA_DIR = os.environ.get("OWUI_DATA_DIR", "/owui-data")
 FULLDOC_MAX_BYTES = int(os.environ.get("FULLDOC_MAX_BYTES", str(30 * 1024 * 1024)))
+# Fallback-Zeitfenster: schickt OWUI keine Datei-Referenz, gilt der juengste Upload
+# innerhalb dieser Spanne als die gemeinte Datei (Default 15 min).
+RECENT_UPLOAD_MAX_AGE_S = int(os.environ.get("RECENT_UPLOAD_MAX_AGE_S", "900"))
 
 SYSTEM_PROMPT = """Du bist ein praeziser Engineering-Assistent fuer einen
 oesterreichischen Daten-Ingenieur (Sozialversicherungs-Domaene). Antworte auf
@@ -363,6 +367,52 @@ def extract_query(messages: list[dict]) -> str:
     if isinstance(q, list):
         q = " ".join(p.get("text", "") for p in q if isinstance(p, dict))
     return q
+
+
+# --- OWUI-Hintergrundtasks (Titel/Tags/Query-/Follow-up-Generierung) ---------
+# OWUI nutzt fuer EXTERNE (OpenAI-API-)Modelle TASK_MODEL_EXTERNAL; ist der nicht
+# erreichbar (mem0-struct-Profil aus), faellt es auf das CHAT-Modell zurueck und
+# schickt research-agent seine internen Task-Prompts. Die sollen NICHT durch die
+# Such-/Critic-Pipeline (sonst Websuche/Code fuer einen Chat-Titel). Erkennbar am
+# festen '### Task:'-Praefix -> wir reichen sie 1:1 ans Hauptmodell durch.
+_OWUI_TASK_RE = re.compile(r"^\s*###\s*Task:", re.IGNORECASE)
+
+
+def _last_content(messages: list[dict]) -> str:
+    if not messages:
+        return ""
+    last = messages[-1] if isinstance(messages[-1], dict) else {}
+    c = last.get("content", "")
+    if isinstance(c, list):
+        c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
+    return str(c or "")
+
+
+def is_owui_task(messages: list[dict]) -> bool:
+    """True bei einem OWUI-Hintergrundtask (Titel-/Tag-/Query-/Follow-up-/
+    Autocomplete-Generierung). Diese tragen einen festen '### Task:'-Prompt."""
+    return bool(_OWUI_TASK_RE.match(_last_content(messages)))
+
+
+async def simple_completion(messages: list[dict], temperature: float = 0.3,
+                            max_tokens: int = 1024) -> str:
+    """Genau EIN LLM-Durchlauf ohne Agent-Pipeline (kein RAG/Web/Code/Critic).
+    Fuer OWUI-Hintergrundtasks: die Task-Nachrichten enthalten ihr Ausgabeformat
+    (z.B. JSON fuer die Query-Generierung) bereits selbst -> 1:1 ans Hauptmodell."""
+    payload = {"model": LLM_MODEL, "messages": messages,
+               "temperature": temperature, "max_tokens": max_tokens, "stream": False}
+    try:
+        async with httpx.AsyncClient() as http:
+            r = await http.post(LLM_BASE_URL.rstrip("/") + "/chat/completions",
+                                json=payload,
+                                headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+                                timeout=60.0)
+            r.raise_for_status()
+            data = r.json()
+            return ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "") or ""
+    except Exception as e:
+        log.warning("OWUI-Task-Passthrough (simple_completion) fehlgeschlagen: %s", e)
+        return ""
 
 
 # --- Tool-Funktionen (schlicht, von beiden Varianten genutzt) ---------------
@@ -549,15 +599,51 @@ def file_to_text(name: str, ctype: str, data: bytes) -> str:
         return f"(Datei nicht parsbar: {e})"
 
 
+_OWUI_ID_PREFIX_RE = re.compile(r"^[0-9a-fA-F-]{8,}_(.+)$")  # '{id}_{originalname}'
+
+
+def _strip_owui_id_prefix(name: str) -> str:
+    m = _OWUI_ID_PREFIX_RE.match(name or "")
+    return m.group(1) if m else (name or "")
+
+
+def _recent_upload(max_age_s: int = None):
+    """Pfad des JUENGSTEN Uploads im OWUI-Volume (oder None). Fallback, wenn OWUI dem
+    externen Modell KEINE Datei-Referenz mitschickt (beobachtet bei research-agent):
+    direkt nach dem Upload fragt der User -> die frischeste Datei ist die gemeinte.
+    Zeitfenster (Default 15 min) verhindert, dass alte Uploads faelschlich gezogen werden."""
+    if max_age_s is None:
+        max_age_s = RECENT_UPLOAD_MAX_AGE_S
+    try:
+        cands = glob.glob(f"{OWUI_DATA_DIR.rstrip('/')}/uploads/*")
+    except Exception:
+        return None
+    newest, newest_mt = None, 0.0
+    for p in cands:
+        if not os.path.isfile(p):
+            continue
+        try:
+            mt = os.path.getmtime(p)
+        except Exception:
+            continue
+        if mt > newest_mt:
+            newest, newest_mt = p, mt
+    if not newest:
+        return None
+    age = time.time() - newest_mt
+    if age > max_age_s:
+        log.info("Volltext: juengster Upload zu alt (%.0fs > %ds): %s",
+                 age, max_age_s, os.path.basename(newest))
+        return None
+    return newest
+
+
 def read_full_document(body: dict):
     """(name, text) der GROESSTEN lesbaren angehaengten Datei oder None. Liest direkt
-    aus dem gemounteten OWUI-Upload-Volume (kein OWUI-API, kein 401)."""
+    aus dem gemounteten OWUI-Upload-Volume (kein OWUI-API, kein 401). Faellt auf den
+    JUENGSTEN Upload zurueck, wenn OWUI keine verwertbare Datei-Referenz mitschickt."""
     refs = _owui_file_refs(body)
-    if not refs:
-        log.info("Volltext: KEINE Datei-Referenzen im Request (body-keys=%s)",
-                 list(body.keys()) if isinstance(body, dict) else type(body).__name__)
-        return None
-    best = None
+    best = None  # (size, name, content_type, local_path)
     for ref in refs:
         lp = _owui_local_path(ref)
         if not lp:
@@ -571,21 +657,39 @@ def read_full_document(body: dict):
         if sz > FULLDOC_MAX_BYTES:
             log.warning("Volltext: %s zu gross (%d B) -> uebersprungen", ref["name"], sz)
             continue
+        name = ref["name"] or os.path.basename(lp)
+        if ref["id"] and name.startswith(ref["id"] + "_"):  # OWUI-Praefix {id}_ entfernen
+            name = name[len(ref["id"]) + 1:]
         if best is None or sz > best[0]:
-            best = (sz, ref, lp)
-    if not best:
-        return None
-    _, ref, lp = best
+            best = (sz, name, ref["content_type"], lp)
+
+    if best is None:
+        # Keine verwertbare Datei-Referenz -> juengsten Upload aus dem Volume nehmen.
+        lp = _recent_upload()
+        if not lp:
+            log.info("Volltext: KEINE Datei-Referenz im Request UND kein frischer Upload "
+                     "im Volume (body-keys=%s)",
+                     list(body.keys()) if isinstance(body, dict) else type(body).__name__)
+            return None
+        try:
+            sz = os.path.getsize(lp)
+        except Exception:
+            return None
+        if sz > FULLDOC_MAX_BYTES:
+            log.warning("Volltext: juengster Upload zu gross (%d B) -> uebersprungen", sz)
+            return None
+        name = _strip_owui_id_prefix(os.path.basename(lp))
+        log.info("Volltext: nutze juengsten Upload als Fallback: %s", name)
+        best = (sz, name, "", lp)
+
+    _, name, ctype, lp = best
     try:
         with open(lp, "rb") as fh:
             data = fh.read()
     except Exception as e:
         log.warning("Volltext: %s nicht lesbar: %s", lp, e)
         return None
-    name = ref["name"] or os.path.basename(lp)
-    if name.startswith(ref["id"] + "_"):       # OWUI-Praefix {id}_ entfernen
-        name = name[len(ref["id"]) + 1:]
-    text = file_to_text(name, ref["content_type"], data)
+    text = file_to_text(name, ctype, data)
     if not text or not text.strip():
         return None
     log.info("Volltext geladen: %s (%d Zeichen)", name, len(text))

@@ -6,6 +6,7 @@ Aktiv bei AGENT_IMPL=pydantic (Default).
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 
 import httpx
@@ -28,6 +29,7 @@ _memory = C.build_memory()
 @dataclass
 class Deps:
     http: httpx.AsyncClient
+    fulltext: str | None = None  # Volltext der angehaengten Datei (Volltext-Modus)
 
 
 _model = OpenAIModel(C.LLM_MODEL, provider=OpenAIProvider(base_url=C.LLM_BASE_URL, api_key=C.LLM_API_KEY))
@@ -48,8 +50,13 @@ async def search_web(ctx: RunContext[Deps], query: str) -> str:
 
 @_agent.tool
 async def run_code(ctx: RunContext[Deps], code: str) -> str:
-    """Python in der luftdichten Sandbox ausfuehren (Office-Files/Notebooks moeglich)."""
-    return await C.t_run_code(ctx.deps.http, code)
+    """Python in der luftdichten Sandbox ausfuehren (Office-Files/Notebooks moeglich).
+    Im Volltext-Modus liegt die ganze Datei als 'document.txt' im Arbeitsverzeichnis."""
+    files = None
+    if ctx.deps.fulltext:
+        files = {"document.txt": base64.b64encode(
+            ctx.deps.fulltext.encode("utf-8")).decode("ascii")}
+    return await C.t_run_code(ctx.deps.http, code, files=files)
 
 
 if C.MORPHIK_API_URL:
@@ -65,12 +72,23 @@ def _result_text(result) -> str:
 
 async def run_agent(messages: list[dict], user_id: str = "owui",
                     request_body: dict | None = None) -> str:
-    # request_body (OWUI-Anhaenge) wird in dieser Variante noch nicht genutzt
-    # (Volltext-Modus ist in der langgraph-Variante implementiert).
     query = C.extract_query(messages)
-    prompt = C.mem_search(_memory, query, user_id) + f"Aktuelle Anfrage:\n{query}"
+    parts = [C.mem_search(_memory, query, user_id)]
+    fulltext = None
+    doc = C.read_full_document(request_body or {})  # Volltext der angehaengten Datei
+    if doc:
+        name, fulltext = doc
+        parts.append(
+            f"VOLLTEXT-MODUS: Die KOMPLETTE Datei '{name}' ({len(fulltext)} Zeichen) liegt "
+            f"im Sandbox-Arbeitsverzeichnis als 'document.txt'. Fuer Aufgaben ueber das GANZE "
+            f"Dokument (zaehlen, alle Vorkommen, Statistik) NICHT die RAG-Schnipsel nehmen, "
+            f"sondern 'run_code' nutzen und open('document.txt', encoding='utf-8').read() "
+            f"verarbeiten (Ergebnis drucken, bei Bedarf CSV speichern).\n"
+            f"Vorschau (Anfang):\n{fulltext[:1200]}\n")
+    parts.append(f"Aktuelle Anfrage:\n{query}")
+    prompt = "\n".join(p for p in parts if p)
     async with httpx.AsyncClient() as http:
-        result = await _agent.run(prompt, deps=Deps(http=http))
+        result = await _agent.run(prompt, deps=Deps(http=http, fulltext=fulltext))
     answer = _result_text(result)
     C.mem_add(_memory, query, answer, user_id)
     return answer
