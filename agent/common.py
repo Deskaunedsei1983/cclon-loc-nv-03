@@ -552,10 +552,17 @@ def file_to_text(name: str, ctype: str, data: bytes) -> str:
 def read_full_document(body: dict):
     """(name, text) der GROESSTEN lesbaren angehaengten Datei oder None. Liest direkt
     aus dem gemounteten OWUI-Upload-Volume (kein OWUI-API, kein 401)."""
+    refs = _owui_file_refs(body)
+    if not refs:
+        log.info("Volltext: KEINE Datei-Referenzen im Request (body-keys=%s)",
+                 list(body.keys()) if isinstance(body, dict) else type(body).__name__)
+        return None
     best = None
-    for ref in _owui_file_refs(body):
+    for ref in refs:
         lp = _owui_local_path(ref)
         if not lp:
+            log.info("Volltext: Datei NICHT im Volume gefunden (id=%s path=%s dir=%s)",
+                     ref.get("id"), ref.get("path"), OWUI_DATA_DIR)
             continue
         try:
             sz = os.path.getsize(lp)
