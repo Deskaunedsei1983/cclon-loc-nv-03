@@ -10,11 +10,14 @@ import time
 import json
 import uuid
 import asyncio
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 import common as C
+
+_log = logging.getLogger("agent.server")
 
 IMPL = os.environ.get("AGENT_IMPL", "pydantic").lower()
 if IMPL == "pydantic":
@@ -65,6 +68,16 @@ async def chat_completions(request: Request):
     messages = body.get("messages", [])
     stream = bool(body.get("stream", False))
     user_id = body.get("user") or "owui"
+
+    # DIAGNOSE Volltext: was schickt OWUI dem Agent wirklich?
+    try:
+        last = messages[-1].get("content") if (messages and isinstance(messages[-1], dict)) else ""
+        _log.info("OWUI-REQ keys=%s | n_msgs=%d | has_files=%s | has_metadata=%s | "
+                  "last_content=%.1800s",
+                  list(body.keys()), len(messages), bool(body.get("files")),
+                  bool(body.get("metadata")), str(last)[:1800])
+    except Exception:
+        pass
 
     answer = await run_agent(messages, user_id=user_id, request_body=body)
     cid = f"chatcmpl-{uuid.uuid4().hex[:24]}"
