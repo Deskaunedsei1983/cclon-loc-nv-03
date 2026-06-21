@@ -1,7 +1,7 @@
 """
 title: Ingest Router (RAGFlow/Morphik Auto-Weiche)
 author: local-ai-stack
-version: 0.2.0
+version: 0.3.0
 required_open_webui_version: 0.5.0
 description: >
   Schiebt im Chat HOCHGELADENE Dateien automatisch in die richtige Wissensbasis:
@@ -11,9 +11,10 @@ description: >
 
   KEY-LOS: braucht KEINEN OWUI-API-Key. Datei-Bytes werden mehrstufig beschafft:
     1) Bilder als data:-Base64 direkt aus der Nachricht (kein Fetch),
-    2) GET /api/v1/files/{id}/content OHNE Auth (geht, da WEBUI_AUTH=false),
-    3) prozess-intern via open_webui Files/Storage,
-    4) Fallback: der bereits extrahierte Text als .txt.
+    2) LOKALER Pfad aus dem Datei-Deskriptor (Filter laeuft im OWUI-Container),
+    3) GET /api/v1/files/{id}/content (in OWUI 0.9.5 nur MIT Auth -> oft 401),
+    4) prozess-intern via open_webui Files/Storage,
+    5) Fallback: der bereits extrahierte Text als .txt.
 
   Installation: OWUI -> Admin -> Functions -> "+" -> Code einfuegen -> aktivieren,
   global ODER dem Modell "research-agent" zuweisen. In den Valves ist nichts
@@ -111,7 +112,8 @@ def _collect(body: dict) -> list[dict]:
             text = data_field.get("content") if isinstance(data_field, dict) else None
             if fid:
                 items.append({"dedup": f"id:{fid}", "name": name,
-                              "content_type": ctype, "fid": fid, "text": text})
+                              "content_type": ctype, "fid": fid, "text": text,
+                              "path": inner.get("path") or f.get("path")})
             elif text:
                 h = hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
                 items.append({"dedup": f"txt:{h}", "name": name, "content_type": ctype,
@@ -181,6 +183,15 @@ class Filter:
         """Bytes + content_type + name beschaffen; mehrstufig, key-los."""
         if item.get("data") is not None:
             return item["data"], item.get("content_type") or "application/octet-stream", item["name"]
+        # 0) Lokale Datei direkt lesen (Filter laeuft IM OWUI-Container -> kein HTTP/Key).
+        #    OWUI 0.9.5 liefert /api/v1/files/{id}/content nur MIT Auth (401) -> Pfad nutzen.
+        p = item.get("path")
+        if p:
+            try:
+                with open(p, "rb") as fh:
+                    return fh.read(), item.get("content_type") or "application/octet-stream", item["name"]
+            except Exception:
+                log.warning("ingest_router: lokaler Pfad nicht lesbar (%s)", p)
         if item.get("fid"):
             data = await self._fetch_http(session, item["fid"]) or _read_internal(item["fid"])
             if data is not None:
