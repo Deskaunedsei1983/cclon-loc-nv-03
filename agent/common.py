@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import logging
+import collections
 import datetime
 import base64
 import glob
@@ -709,6 +710,54 @@ def read_full_document(body: dict):
         return None
     log.info("Volltext geladen: %s (%d Zeichen)", name, len(text))
     return name, text
+
+
+# --- Eigennamen-Kandidaten datengetrieben aus dem Volltext -------------------
+# Damit das Modell bei "zaehle Namen/Orte" NICHT aus dem Gedaechtnis raet (falsche
+# Schreibweisen -> 0-Treffer; z.B. engl. 'Isengard' statt dt. 'Isengart'), liefern
+# wir die TATSAECHLICH im Text vorkommenden, exakt geschriebenen Tokens mit Anzahl.
+# Heuristik: grossgeschriebene Wort-Tokens zaehlen; Satzanfangs-Funktionswoerter
+# (der/Der, und/Und ...) raus, indem die KLEIN-Variante haeufiger sein muss als die
+# Gross-Variante. Deutsche Nomen bleiben drin (immer gross) -> das Modell filtert
+# Personen/Orte mit Weltwissen aus den ECHTEN Tokens (richtige Schreibweise).
+_WORD_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)  # >=2 Unicode-Buchstaben, keine Ziffern
+# Kompakte Funktionswort-Stoppliste (Artikel/Pronomen/Konjunktionen/Praepositionen/
+# Hilfsverben) — falls eine Form am Satzanfang doch ueberwiegt (kurze Dokumente). Echte
+# Nomen/Eigennamen bleiben drin; Personen/Orte filtert das Modell aus den Tokens.
+_STOP_DE = frozenset("""der die das den dem des ein eine einen einem eines und oder aber
+doch denn sondern sie er es ich du wir ihr man mir mich dir dich ihm ihn ihnen uns euch
+als wenn weil dass da wie was wer wo wann warum welche welcher welches so nun dann also
+auch nur noch schon sehr hier dort jetzt im in an auf aus bei mit nach von vor zu zum zur
+ueber unter durch fuer ohne gegen um bis seit waehrend nicht kein keine mein meine dein
+diese dieser dieses jener jede jeder alle alles einige viele manche solche hatte hatten
+hat war waren ist sind wird werden wurde wurden kann konnte muss musste will wollte soll
+sollte habe haben sich sein seine ihre dass""".split())
+
+
+def proper_noun_candidates(text: str, n: int = 80, min_count: int = 3):
+    """[(token, count), ...] der haeufigsten ueberwiegend grossgeschriebenen Tokens
+    (exakte Schreibweise wie im Text), nach Haeufigkeit sortiert."""
+    cap: "collections.Counter[str]" = collections.Counter()
+    low: "collections.Counter[str]" = collections.Counter()
+    for m in _WORD_RE.finditer(text or ""):
+        w = m.group(0)
+        if w[:1].isupper():
+            cap[w] += 1
+        else:
+            low[w.lower()] += 1
+    out = []
+    for w, c in cap.most_common():
+        if c < min_count:
+            break
+        wl = w.lower()
+        if wl in _STOP_DE:              # Funktionswort -> raus
+            continue
+        if low.get(wl, 0) > c:          # Satzanfangs-Wort (klein dominanter) -> raus
+            continue
+        out.append((w, c))
+        if len(out) >= n:
+            break
+    return out
 
 
 # --- Code-Sandbox -----------------------------------------------------------

@@ -78,13 +78,20 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
     doc = C.read_full_document(request_body or {})  # Volltext der angehaengten Datei
     if doc:
         name, fulltext = doc
+        cands = C.proper_noun_candidates(fulltext, 80)
+        cand_line = ", ".join(f"{w}:{c}" for w, c in cands) or "(keine erkannt)"
         parts.append(
             f"VOLLTEXT-MODUS: Die KOMPLETTE Datei '{name}' ({len(fulltext)} Zeichen) liegt "
             f"im Sandbox-Arbeitsverzeichnis als 'document.txt'. Fuer Aufgaben ueber das GANZE "
             f"Dokument (zaehlen, alle Vorkommen, Statistik) NICHT die RAG-Schnipsel nehmen, "
             f"sondern 'run_code' nutzen und open('document.txt', encoding='utf-8').read() "
             f"verarbeiten (Ergebnis drucken, bei Bedarf CSV speichern).\n"
-            f"Vorschau (Anfang):\n{fulltext[:1200]}\n")
+            f"WICHTIG bei Namens-/Haeufigkeitsaufgaben: Rate KEINE Begriffsliste aus dem "
+            f"Gedaechtnis (Schreibweisen weichen ab -> falsche 0-Treffer). Nimm die unten aus "
+            f"dem Text extrahierten, EXAKT geschriebenen Kandidaten und waehle die gefragten "
+            f"Personen/Orte daraus. Zaehle mit Wortgrenzen (re.findall(r'\\b'+re.escape(w)+r'\\b')).\n"
+            f"Haeufigste grossgeschriebene Tokens (exakte Schreibweise, Token:Anzahl):\n{cand_line}\n"
+            f"Vorschau (Anfang):\n{fulltext[:800]}\n")
     parts.append(f"Aktuelle Anfrage:\n{query}")
     prompt = "\n".join(p for p in parts if p)
     async with httpx.AsyncClient() as http:

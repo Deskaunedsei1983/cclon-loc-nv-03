@@ -111,8 +111,14 @@ async def draft(state: State) -> State:
     if state.get("critique"):
         parts.append(f"\nVerbessere den vorigen Entwurf gemaess Kritik:\n{state['critique']}")
         parts.append(f"\nVoriger Entwurf:\n{state.get('draft','')}")
+        if state.get("exec_out"):
+            parts.append("\nAusfuehrungsergebnis des vorigen Codes (ECHTE Daten aus dem "
+                         "Dokument — daran orientieren, nicht neu raten):\n"
+                         + state["exec_out"][:6000])
     if state.get("fulltext"):
         ft = state["fulltext"]
+        cands = C.proper_noun_candidates(ft, 80)
+        cand_line = ", ".join(f"{w}:{c}" for w, c in cands) or "(keine erkannt)"
         parts.append(
             f"\nVOLLTEXT-MODUS: Die KOMPLETTE Datei '{state.get('fulldoc_name','Dokument')}' "
             f"({len(ft)} Zeichen) liegt im Sandbox-Arbeitsverzeichnis als 'document.txt'. "
@@ -120,7 +126,15 @@ async def draft(state: State) -> State:
             f"NICHT die RAG-Schnipsel nehmen, sondern EINEN ```python-Block schreiben, der "
             f"open('document.txt', encoding='utf-8').read() verarbeitet, das Ergebnis druckt "
             f"und bei Bedarf eine CSV im Arbeitsverzeichnis speichert.\n"
-            f"Vorschau (Anfang):\n{ft[:1200]}")
+            f"WICHTIG bei Namens-/Haeufigkeitsaufgaben: Rate KEINE Begriffsliste aus dem "
+            f"Gedaechtnis — Schreibweisen im Text weichen oft ab (Uebersetzungen, Akzente, "
+            f"Sonderzeichen) und ergeben falsche 0-Treffer. Nimm die unten DATENGETRIEBEN aus "
+            f"dem Dokument extrahierten, EXAKT geschriebenen Kandidaten und waehle daraus die "
+            f"gefragten Personen/Orte (offensichtliche Allgemeinwoerter weglassen). Zaehle mit "
+            f"Wortgrenzen: re.findall(r'\\b'+re.escape(w)+r'\\b', text).\n"
+            f"Haeufigste grossgeschriebene Tokens im Dokument (exakte Schreibweise, Token:Anzahl):\n"
+            f"{cand_line}\n"
+            f"Vorschau (Anfang):\n{ft[:800]}")
     parts.append("\nBrauchst du eine Berechnung/Datei, gib EINEN ```python ...``` Block aus; "
                  "er wird in der Sandbox ausgefuehrt.")
     sys = _SYS_ORCHESTRATED + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context()
