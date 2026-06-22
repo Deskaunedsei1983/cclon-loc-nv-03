@@ -366,16 +366,21 @@ def extract_query(messages: list[dict]) -> str:
     q = user_msgs[-1]["content"] if user_msgs else ""
     if isinstance(q, list):
         q = " ".join(p.get("text", "") for p in q if isinstance(p, dict))
-    return q
+    return owui_real_query(q)  # bei OWUI-RAG-Template die echte Frage herausziehen
 
 
 # --- OWUI-Hintergrundtasks (Titel/Tags/Query-/Follow-up-Generierung) ---------
 # OWUI nutzt fuer EXTERNE (OpenAI-API-)Modelle TASK_MODEL_EXTERNAL; ist der nicht
 # erreichbar (mem0-struct-Profil aus), faellt es auf das CHAT-Modell zurueck und
 # schickt research-agent seine internen Task-Prompts. Die sollen NICHT durch die
-# Such-/Critic-Pipeline (sonst Websuche/Code fuer einen Chat-Titel). Erkennbar am
-# festen '### Task:'-Praefix -> wir reichen sie 1:1 ans Hauptmodell durch.
+# Such-/Critic-Pipeline (sonst Websuche/Code fuer einen Chat-Titel).
 _OWUI_TASK_RE = re.compile(r"^\s*###\s*Task:", re.IGNORECASE)
+# ACHTUNG: OWUIs RAG-ANTWORT-Template ("Respond to the user query using the provided
+# context") startet AUCH mit '### Task:', traegt aber den Dokument-Kontext
+# (<context>/<source resource-id=...>) und IST die echte Nutzerfrage -> darf NICHT
+# kurzgeschlossen werden (sonst laeuft der Volltext-Modus nie). Daran trennen.
+_OWUI_CTX_RE = re.compile(r"<context>|<source\b|resource-id=", re.IGNORECASE)
+_OWUI_USERQ_RE = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.IGNORECASE | re.DOTALL)
 
 
 def _last_content(messages: list[dict]) -> str:
@@ -389,9 +394,19 @@ def _last_content(messages: list[dict]) -> str:
 
 
 def is_owui_task(messages: list[dict]) -> bool:
-    """True bei einem OWUI-Hintergrundtask (Titel-/Tag-/Query-/Follow-up-/
-    Autocomplete-Generierung). Diese tragen einen festen '### Task:'-Prompt."""
-    return bool(_OWUI_TASK_RE.match(_last_content(messages)))
+    """True NUR bei OWUI-HINTERGRUNDtasks (Titel-/Tag-/Query-/Follow-up-/Autocomplete-
+    Generierung): '### Task:'-Prompt OHNE eingebetteten Dokument-Kontext. Die RAG-
+    Antwort-Generierung (mit <context>/<source resource-id=...>) ist die echte Frage und
+    MUSS durch die volle Pipeline (dort holt read_full_document den Volltext)."""
+    c = _last_content(messages)
+    return bool(_OWUI_TASK_RE.match(c)) and not _OWUI_CTX_RE.search(c)
+
+
+def owui_real_query(content: str) -> str:
+    """Aus OWUIs RAG-Template die echte <user_query> herausziehen (sonst unveraendert),
+    damit die Pipeline auf der Nutzerfrage statt auf dem Template-Boilerplate arbeitet."""
+    m = _OWUI_USERQ_RE.search(content or "")
+    return m.group(1).strip() if m else (content or "")
 
 
 async def simple_completion(messages: list[dict], temperature: float = 0.3,

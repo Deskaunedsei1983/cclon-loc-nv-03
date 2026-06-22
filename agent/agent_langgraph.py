@@ -78,6 +78,12 @@ class State(TypedDict, total=False):
 
 
 async def gather(state: State) -> State:
+    # Volltext-Modus: die GANZE angehaengte Datei ist die Quelle -> die (oft
+    # themenfremden) RAG-Schnipsel ueberspringen, sonst kontaminieren sie den Entwurf.
+    if state.get("fulltext"):
+        return {"retrieved": f"(Volltext-Modus: ganze Datei '{state.get('fulldoc_name','Dokument')}' "
+                             f"liegt als document.txt vor; RAG-Schnipsel uebersprungen.)",
+                "iteration": 0}
     async with httpx.AsyncClient() as http:
         docs = await C.t_retrieve_documents(http, state["query"])
         extra = ""
