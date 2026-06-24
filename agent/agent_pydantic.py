@@ -78,20 +78,22 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
     doc = C.read_full_document(request_body or {})  # Volltext der angehaengten Datei
     if doc:
         name, fulltext = doc
-        cands = C.proper_noun_candidates(fulltext, 80)
+        cands = C.proper_noun_candidates(fulltext, 150)
         cand_line = ", ".join(f"{w}:{c}" for w, c in cands) or "(keine erkannt)"
         parts.append(
             f"VOLLTEXT-MODUS: Die KOMPLETTE Datei '{name}' ({len(fulltext)} Zeichen) liegt "
-            f"im Sandbox-Arbeitsverzeichnis als 'document.txt'. Fuer Aufgaben ueber das GANZE "
-            f"Dokument (zaehlen, alle Vorkommen, Statistik) NICHT die RAG-Schnipsel nehmen, "
-            f"sondern 'run_code' nutzen und open('document.txt', encoding='utf-8').read() "
-            f"verarbeiten (Ergebnis drucken, bei Bedarf CSV speichern).\n"
-            f"WICHTIG bei Namens-/Haeufigkeitsaufgaben: Rate KEINE Begriffsliste aus dem "
-            f"Gedaechtnis (Schreibweisen weichen ab -> falsche 0-Treffer). Nimm die unten aus "
-            f"dem Text extrahierten, EXAKT geschriebenen Kandidaten und waehle die gefragten "
-            f"Personen/Orte daraus. Zaehle mit Wortgrenzen (re.findall(r'\\b'+re.escape(w)+r'\\b')).\n"
-            f"Haeufigste grossgeschriebene Tokens (exakte Schreibweise, Token:Anzahl):\n{cand_line}\n"
-            f"Vorschau (Anfang):\n{fulltext[:800]}\n")
+            f"im Sandbox-Arbeitsverzeichnis als 'document.txt'. Aufgaben ueber das GANZE Dokument "
+            f"NUR damit loesen (NICHT mit RAG-Schnipseln) via 'run_code'.\n"
+            f"Bei Namens-/Haeufigkeitsaufgaben: (1) Rate KEINE Begriffe (falsche Schreibweisen -> "
+            f"0-Treffer) — waehle Personen/Orte aus den unten EXAKT extrahierten Tokens. (2) NUR "
+            f"echte Eigennamen; KEINE Himmelsrichtungen (Norden/Osten/...), Voelker-/Gattungs-"
+            f"begriffe (Hobbits, Halblinge, Elben) oder Allgemeinwoerter; Mehrwortnamen ('Minas "
+            f"Tirith') ganz zaehlen, nicht das Fragment. (3) JEDEN Namen EXAKT per run_code gegen "
+            f"document.txt zaehlen (re.findall(r'\\b'+re.escape(name)+r'\\b', text)), absteigend, "
+            f"CSV speichern. Vorschau-Zahlen sind unvollstaendig (nur Top-Tokens) — NIE '< 100' "
+            f"schreiben, immer die exakte Zahl aus dem Code.\n"
+            f"Extrahierte Tokens (exakte Schreibweise, Token:Anzahl):\n{cand_line}\n"
+            f"Vorschau (Anfang):\n{fulltext[:600]}\n")
     parts.append(f"Aktuelle Anfrage:\n{query}")
     prompt = "\n".join(p for p in parts if p)
     async with httpx.AsyncClient() as http:

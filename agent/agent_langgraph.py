@@ -32,6 +32,9 @@ _llm_strict = ChatOpenAI(model=C.LLM_MODEL, base_url=C.LLM_BASE_URL, api_key=C.L
 
 CODE_RE = re.compile(r"```python\s+(.*?)```", re.DOTALL)
 _LIST_MARK = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")  # nur Listenmarker, KEINE Zahl-im-Text
+# Naeherungen/Platzhalter statt exakter, code-gezaehlter Werte (Volltext-Zaehlaufgaben):
+_APPROX_RE = re.compile(r"<\s*\d|>\s*\d|nicht in Top|Top-?\s*\d+|\bca\.?\s*\d|\bcirca\b|ungef[aä]hr",
+                        re.IGNORECASE)
 MAX_ITER = int(os.environ.get("VERIFY_MAX_ITER", "3"))
 VERIFY_MAX_QUERIES = int(os.environ.get("VERIFY_MAX_QUERIES", "3"))
 
@@ -117,24 +120,26 @@ async def draft(state: State) -> State:
                          + state["exec_out"][:6000])
     if state.get("fulltext"):
         ft = state["fulltext"]
-        cands = C.proper_noun_candidates(ft, 80)
+        cands = C.proper_noun_candidates(ft, 150)
         cand_line = ", ".join(f"{w}:{c}" for w, c in cands) or "(keine erkannt)"
         parts.append(
             f"\nVOLLTEXT-MODUS: Die KOMPLETTE Datei '{state.get('fulldoc_name','Dokument')}' "
             f"({len(ft)} Zeichen) liegt im Sandbox-Arbeitsverzeichnis als 'document.txt'. "
-            f"Fuer Aufgaben ueber das GANZE Dokument (zaehlen, alle Vorkommen, Statistik) "
-            f"NICHT die RAG-Schnipsel nehmen, sondern EINEN ```python-Block schreiben, der "
-            f"open('document.txt', encoding='utf-8').read() verarbeitet, das Ergebnis druckt "
-            f"und bei Bedarf eine CSV im Arbeitsverzeichnis speichert.\n"
-            f"WICHTIG bei Namens-/Haeufigkeitsaufgaben: Rate KEINE Begriffsliste aus dem "
-            f"Gedaechtnis — Schreibweisen im Text weichen oft ab (Uebersetzungen, Akzente, "
-            f"Sonderzeichen) und ergeben falsche 0-Treffer. Nimm die unten DATENGETRIEBEN aus "
-            f"dem Dokument extrahierten, EXAKT geschriebenen Kandidaten und waehle daraus die "
-            f"gefragten Personen/Orte (offensichtliche Allgemeinwoerter weglassen). Zaehle mit "
-            f"Wortgrenzen: re.findall(r'\\b'+re.escape(w)+r'\\b', text).\n"
-            f"Haeufigste grossgeschriebene Tokens im Dokument (exakte Schreibweise, Token:Anzahl):\n"
-            f"{cand_line}\n"
-            f"Vorschau (Anfang):\n{ft[:800]}")
+            f"Aufgaben ueber das GANZE Dokument NUR damit loesen, NICHT mit RAG-Schnipseln.\n"
+            f"Bei Namens-/Haeufigkeitsaufgaben GENAU SO vorgehen:\n"
+            f"1) Rate KEINE Begriffe aus dem Gedaechtnis (Schreibweisen im Text weichen ab: "
+            f"Uebersetzungen, Akzente -> falsche 0-Treffer). Waehle Personen/Orte aus den unten "
+            f"aus dem Text extrahierten, EXAKT geschriebenen Tokens.\n"
+            f"2) NUR echte Eigennamen (konkrete Personen/Orte). KEINE Himmelsrichtungen "
+            f"(Norden/Osten/Sueden/Westen), Voelker-/Gattungsbegriffe (Hobbits, Halblinge, Menschen, "
+            f"Elben, Zwerge) oder Allgemeinwoerter. Mehrwortnamen (z.B. 'Minas Tirith') als GANZEN "
+            f"Namen zaehlen, nicht das Fragment ('Minas').\n"
+            f"3) Schreibe GENAU EINEN ```python-Block, der document.txt liest und JEDEN gewaehlten "
+            f"Namen EXAKT mit Wortgrenzen zaehlt (re.findall(r'\\b'+re.escape(name)+r'\\b', text)), "
+            f"absteigend sortiert und eine CSV speichert. Die Vorschau-Zahlen sind nur ein Hinweis "
+            f"und UNVOLLSTAENDIG (nur Top-Tokens) — die endgueltige Tabelle kommt AUS DEM CODE. "
+            f"Schreibe NIEMALS '< 100' oder 'nicht in Top-N'; gib fuer JEDEN Namen die exakte Zahl.\n"
+            f"Extrahierte Tokens (exakte Schreibweise, Token:Anzahl):\n{cand_line}")
     parts.append("\nBrauchst du eine Berechnung/Datei, gib EINEN ```python ...``` Block aus; "
                  "er wird in der Sandbox ausgefuehrt.")
     sys = _SYS_ORCHESTRATED + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context()
@@ -246,6 +251,15 @@ async def critic(state: State) -> State:
                                {"role": "user", "content": ctx}])
     text = resp.content.strip()
     approved = text.upper().startswith("APPROVE") or state.get("iteration", 0) >= MAX_ITER
+    # Sicherheitsnetz Volltext: Naeherungen/Platzhalter ('< 100', 'nicht in Top-N', 'ca.')
+    # statt exakter, code-gezaehlter Werte -> Revise erzwingen (bis MAX_ITER).
+    if (state.get("fulltext") and approved and state.get("iteration", 0) < MAX_ITER
+            and _APPROX_RE.search(state.get("draft", ""))):
+        approved = False
+        text = ("REVISE\nVolltext-Modus: Die Tabelle enthaelt Naeherungen/Platzhalter "
+                "('< N', 'nicht in Top-N', 'ca.') statt exakter Werte. Zaehle JEDEN genannten "
+                "Namen EXAKT per ```python gegen document.txt (re.findall mit Wortgrenzen) und "
+                "gib fuer ALLE Eintraege ganzzahlige Werte aus.")
     return {"approved": approved, "critique": text}
 
 
