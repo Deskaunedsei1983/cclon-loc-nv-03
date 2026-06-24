@@ -74,6 +74,7 @@ def _result_text(result) -> str:
 async def run_agent(messages: list[dict], user_id: str = "owui",
                     request_body: dict | None = None) -> str:
     query = C.extract_query(messages)
+    C.schedule_ingest(request_body or {})  # Chat-Upload lokal nach RAGFlow/Morphik (nicht-blockierend)
     parts = [C.mem_search(_memory, query, user_id)]
     fulltext = only_doc = None
     doc = C.read_full_document(request_body or {})  # Volltext der angehaengten Datei

@@ -492,6 +492,11 @@ services:
       # (JWT_SECRET_KEY == WEBUI_SECRET_KEY). Behebt 401 "Not enough segments".
       - MORPHIK_JWT_SECRET=${WEBUI_SECRET_KEY:-bitte-festen-zufalls-key-setzen}
       - MORPHIK_ENTITY_ID=agent
+      # Auto-Ingest: frische Chat-Uploads selbst an den ingest-router schicken
+      # (klassifiziert -> RAGFlow/Morphik). REIN LOKAL (interner Dienst, kein Egress)
+      # -> macht den fragilen OWUI-Ingest-Filter ueberfluessig (OWUI bleibt reine UI).
+      - AGENT_AUTO_INGEST=${AGENT_AUTO_INGEST:-true}
+      - INGEST_ROUTER_URL=${INGEST_ROUTER_URL:-http://ingest-router:8000}
       # Maskierte Suche + Sandbox
       - SEARCH_URL=http://presidio-proxy:8080/search
       - SANDBOX_RUN_URL=http://code-sandbox:8000/run

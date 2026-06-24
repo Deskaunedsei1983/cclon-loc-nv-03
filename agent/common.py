@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import logging
+import asyncio
 import collections
 import datetime
 import base64
@@ -197,6 +198,15 @@ MSB_EXECUTOR_URL = os.environ.get("MSB_EXECUTOR_URL", "http://host.docker.intern
 # (umgeht den OWUI-0.9.5-401). OWUI legt Uploads unter <data>/uploads/{id}_{name} ab.
 OWUI_DATA_DIR = os.environ.get("OWUI_DATA_DIR", "/owui-data")
 FULLDOC_MAX_BYTES = int(os.environ.get("FULLDOC_MAX_BYTES", str(30 * 1024 * 1024)))
+# Auto-Ingest: frische Chat-Uploads selbst an den ingest-router-Sidecar schicken
+# (klassifiziert -> RAGFlow/Morphik). REIN LOKAL (interner Dienst, KEIN Internet-Egress)
+# -> DSGVO-konform und macht den fragilen OWUI-Ingest-Filter ueberfluessig: der Agent
+# hat die Datei-Bytes (Volltext-Volume) ohnehin schon.
+INGEST_ROUTER_URL = os.environ.get("INGEST_ROUTER_URL", "http://ingest-router:8000").rstrip("/")
+AGENT_AUTO_INGEST = os.environ.get("AGENT_AUTO_INGEST", "true").strip().lower() not in (
+    "0", "false", "no", "off")
+_INGESTED: "set[str]" = set()  # bereits angestossene Uploads (pro Prozess, idempotent)
+_INGEST_TASKS: set = set()      # Referenzen halten -> Hintergrund-Tasks nicht vorzeitig GC'en
 # Fallback-Zeitfenster: schickt OWUI keine Datei-Referenz, gilt der juengste Upload
 # innerhalb dieser Spanne als die gemeinte Datei (Default 15 min).
 RECENT_UPLOAD_MAX_AGE_S = int(os.environ.get("RECENT_UPLOAD_MAX_AGE_S", "900"))
@@ -804,6 +814,54 @@ def proper_noun_candidates(text: str, n: int = 80, min_count: int = 3):
         if len(out) >= n:
             break
     return out
+
+
+# --- Auto-Ingest: Chat-Upload -> ingest-router (RAGFlow/Morphik) -------------
+async def _ingest_one_upload(name: str, ctype: str, lp: str) -> None:
+    try:
+        with open(lp, "rb") as fh:
+            data = fh.read()
+        async with httpx.AsyncClient() as http:
+            r = await http.post(INGEST_ROUTER_URL + "/ingest",
+                                files={"file": (name, data, ctype or "application/octet-stream")},
+                                timeout=180.0)
+        if r.status_code == 200:
+            try:
+                tgt = r.json().get("target", "?")
+            except Exception:
+                tgt = "?"
+            log.info("Auto-Ingest: '%s' -> %s", name, tgt)
+        else:
+            log.warning("Auto-Ingest '%s': HTTP %s (%s)", name, r.status_code, r.text[:200])
+    except Exception as e:
+        log.warning("Auto-Ingest '%s' fehlgeschlagen (ignoriert): %s", name, e)
+
+
+def schedule_ingest(body: dict) -> None:
+    """Frische Chat-Uploads idempotent + NICHT-blockierend an den ingest-router schicken
+    (klassifiziert -> RAGFlow/Morphik). Rein lokal (kein Egress). Ersetzt den OWUI-Filter:
+    der Agent kennt die Datei ueber die resource-id/den lokalen Pfad bereits."""
+    if not (AGENT_AUTO_INGEST and INGEST_ROUTER_URL):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    for ref in _owui_file_refs(body):
+        key = ref.get("id") or ref.get("path") or ""
+        if not key or key in _INGESTED:
+            continue
+        lp = _owui_local_path(ref)
+        if not lp:
+            continue
+        _INGESTED.add(key)
+        name = ref.get("name") or os.path.basename(lp)
+        if ref.get("id") and name.startswith(ref["id"] + "_"):
+            name = name[len(ref["id"]) + 1:]
+        t = loop.create_task(_ingest_one_upload(_strip_owui_id_prefix(name),
+                                                ref.get("content_type"), lp))
+        _INGEST_TASKS.add(t)
+        t.add_done_callback(_INGEST_TASKS.discard)
 
 
 # --- Code-Sandbox -----------------------------------------------------------
