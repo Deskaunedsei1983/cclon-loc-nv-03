@@ -81,18 +81,22 @@ class State(TypedDict, total=False):
 
 
 async def gather(state: State) -> State:
-    # Volltext-Modus: die GANZE angehaengte Datei ist die Quelle -> die (oft
-    # themenfremden) RAG-Schnipsel ueberspringen, sonst kontaminieren sie den Entwurf.
-    if state.get("fulltext"):
-        return {"retrieved": f"(Volltext-Modus: ganze Datei '{state.get('fulldoc_name','Dokument')}' "
-                             f"liegt als document.txt vor; RAG-Schnipsel uebersprungen.)",
-                "iteration": 0}
+    # RAGFlow UND Morphik greifen immer (claude.ai-Funktionsumfang). Liegt eine
+    # Chat-Datei vor (Volltext), wird das Retrieval AUF DIESE DATEI eingegrenzt
+    # (only_doc) -> RAGFlow/Morphik liefern Belege/Zitate aus genau dem Dokument,
+    # ohne themenfremde Treffer; die Ganz-Dokument-Berechnung laeuft auf document.txt.
+    only = state.get("fulldoc_name") if state.get("fulltext") else None
     async with httpx.AsyncClient() as http:
-        docs = await C.t_retrieve_documents(http, state["query"])
+        docs = await C.t_retrieve_documents(http, state["query"], only_doc=only)
         extra = ""
         if C.MORPHIK_API_URL:
-            extra = "\n\n[Multimodal]\n" + await C.t_retrieve_multimodal(http, state["query"])
-    return {"retrieved": (docs + extra)[:6000], "iteration": 0}
+            extra = "\n\n[Multimodal]\n" + await C.t_retrieve_multimodal(http, state["query"], only_doc=only)
+    retrieved = (docs + extra)[:6000]
+    if state.get("fulltext"):
+        retrieved = (f"(Volltext-Modus: die KOMPLETTE Datei '{state.get('fulldoc_name','Dokument')}' "
+                     f"liegt als document.txt vor. Untenstehende RAG-/Morphik-Belege stammen — soweit "
+                     f"schon indiziert — AUS DIESER Datei und dienen als Zitatquelle:)\n" + retrieved)
+    return {"retrieved": retrieved, "iteration": 0}
 
 
 # Node heisst 'draft_node' (langgraph verbietet Node-Name == State-Key 'draft'),

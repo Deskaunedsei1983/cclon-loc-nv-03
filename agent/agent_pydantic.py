@@ -29,7 +29,8 @@ _memory = C.build_memory()
 @dataclass
 class Deps:
     http: httpx.AsyncClient
-    fulltext: str | None = None  # Volltext der angehaengten Datei (Volltext-Modus)
+    fulltext: str | None = None   # Volltext der angehaengten Datei (Volltext-Modus)
+    only_doc: str | None = None   # Retrieval auf die angehaengte Datei eingrenzen
 
 
 _model = OpenAIModel(C.LLM_MODEL, provider=OpenAIProvider(base_url=C.LLM_BASE_URL, api_key=C.LLM_API_KEY))
@@ -39,7 +40,7 @@ _agent = Agent(_model, deps_type=Deps, system_prompt=C.SYSTEM_PROMPT, retries=2)
 @_agent.tool
 async def retrieve_documents(ctx: RunContext[Deps], query: str) -> str:
     """Interne Wissensbasen (RAGFlow) durchsuchen und Belegstellen liefern."""
-    return await C.t_retrieve_documents(ctx.deps.http, query)
+    return await C.t_retrieve_documents(ctx.deps.http, query, only_doc=ctx.deps.only_doc)
 
 
 @_agent.tool
@@ -63,7 +64,7 @@ if C.MORPHIK_API_URL:
     @_agent.tool
     async def retrieve_multimodal(ctx: RunContext[Deps], query: str) -> str:
         """Morphik: bild-/tabellenlastige Dokumente (multimodal) durchsuchen."""
-        return await C.t_retrieve_multimodal(ctx.deps.http, query)
+        return await C.t_retrieve_multimodal(ctx.deps.http, query, only_doc=ctx.deps.only_doc)
 
 
 def _result_text(result) -> str:
@@ -74,10 +75,11 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
                     request_body: dict | None = None) -> str:
     query = C.extract_query(messages)
     parts = [C.mem_search(_memory, query, user_id)]
-    fulltext = None
+    fulltext = only_doc = None
     doc = C.read_full_document(request_body or {})  # Volltext der angehaengten Datei
     if doc:
         name, fulltext = doc
+        only_doc = name
         cands = C.proper_noun_candidates(fulltext, 150)
         cand_line = ", ".join(f"{w}:{c}" for w, c in cands) or "(keine erkannt)"
         parts.append(
@@ -97,7 +99,7 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
     parts.append(f"Aktuelle Anfrage:\n{query}")
     prompt = "\n".join(p for p in parts if p)
     async with httpx.AsyncClient() as http:
-        result = await _agent.run(prompt, deps=Deps(http=http, fulltext=fulltext))
+        result = await _agent.run(prompt, deps=Deps(http=http, fulltext=fulltext, only_doc=only_doc))
     answer = _result_text(result)
     C.mem_add(_memory, query, answer, user_id)
     return answer

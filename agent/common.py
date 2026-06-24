@@ -432,12 +432,31 @@ async def simple_completion(messages: list[dict], temperature: float = 0.3,
 
 
 # --- Tool-Funktionen (schlicht, von beiden Varianten genutzt) ---------------
-async def t_retrieve_documents(http: httpx.AsyncClient, query: str) -> str:
-    """RAGFlow-Retrieval. [VERIFY] Endpoint/Payload je RAGFlow-Version."""
+def _doc_name_key(s: str) -> str:
+    """Dateiname -> normalisierter Schluessel (klein, ohne Pfad/Endung/Sonderzeichen)."""
+    s = (s or "").lower().rsplit("/", 1)[-1]
+    s = re.sub(r"\.[a-z0-9]{1,5}$", "", s)   # Endung weg
+    return re.sub(r"[^a-z0-9]+", "", s)        # nur alphanumerisch
+
+
+def _doc_matches(chunk_doc: str, attached: str) -> bool:
+    """Gehoert ein RAG-/Morphik-Chunk zur angehaengten Datei? (robuster Namensabgleich)."""
+    a, b = _doc_name_key(chunk_doc), _doc_name_key(attached)
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a or a[:18] == b[:18]
+
+
+async def t_retrieve_documents(http: httpx.AsyncClient, query: str,
+                               only_doc: str | None = None) -> str:
+    """RAGFlow-Retrieval. [VERIFY] Endpoint/Payload je RAGFlow-Version.
+    only_doc: nur Chunks DIESES Dokuments (Chat-Upload-Bezug -> keine Fremd-Doku-
+    Kontamination; ist es noch nicht indiziert, kommt eine klare Notiz statt Fremdtreffer)."""
     if not RAGFLOW_API_URL or not RAGFLOW_API_KEY:
         return "Kein RAGFlow konfiguriert (RAGFLOW_API_KEY fehlt)."
     url = f"{RAGFLOW_API_URL}/api/v1/retrieval"
-    payload = {"question": query, "dataset_ids": RAGFLOW_DATASET_IDS, "page_size": 8}
+    payload = {"question": query, "dataset_ids": RAGFLOW_DATASET_IDS,
+               "page_size": 20 if only_doc else 8}
     headers = {"Authorization": f"Bearer {RAGFLOW_API_KEY}"}
     try:
         r = await http.post(url, json=payload, headers=headers, timeout=30.0)
@@ -447,10 +466,19 @@ async def t_retrieve_documents(http: httpx.AsyncClient, query: str) -> str:
         if not chunks:
             return "Keine relevanten Dokumente gefunden."
         out = []
-        for c in chunks[:8]:
+        for c in chunks:
             content = c.get("content") or c.get("content_with_weight") or ""
             doc = c.get("document_keyword") or c.get("docnm_kwd") or "?"
+            if only_doc and not _doc_matches(doc, only_doc):
+                continue
             out.append(f"[{doc}] {content}")
+            if len(out) >= 8:
+                break
+        if not out:
+            if only_doc:
+                return (f"('{only_doc}' noch nicht im RAGFlow-Index (Ingest evtl. noch am Laufen) "
+                        f"-> Antwort stuetzt sich auf den Volltext.)")
+            return "Keine relevanten Dokumente gefunden."
         return "\n\n".join(out)[:6000]
     except Exception as e:
         log.exception("RAGFlow-Retrieval fehlgeschlagen")
@@ -479,23 +507,41 @@ def morphik_auth_header() -> dict:
     return {}
 
 
-async def t_retrieve_multimodal(http: httpx.AsyncClient, query: str) -> str:
-    """Morphik-Retrieval fuer bild-/tabellenlastige Dokumente (optional)."""
+async def t_retrieve_multimodal(http: httpx.AsyncClient, query: str,
+                                only_doc: str | None = None) -> str:
+    """Morphik-Retrieval fuer bild-/tabellenlastige Dokumente (optional).
+    only_doc: nur Chunks dieser Datei (Chat-Upload-Bezug, keine Fremd-Doku-Kontamination)."""
     if not MORPHIK_API_URL:
         return "Morphik nicht konfiguriert."
     # [VERIFY] Morphik-Endpoint/Payload gegen deine Version pruefen.
     url = f"{MORPHIK_API_URL}/retrieve/chunks"
     headers = morphik_auth_header()
     try:
-        r = await http.post(url, json={"query": query, "k": 6}, headers=headers, timeout=40.0)
+        r = await http.post(url, json={"query": query, "k": 12 if only_doc else 6},
+                            headers=headers, timeout=40.0)
         r.raise_for_status()
         data = r.json()
         chunks = data if isinstance(data, list) else (data.get("chunks") or data.get("results") or [])
-        if isinstance(chunks, list) and chunks:
-            return "\n\n".join(
-                str(c.get("content", c) if isinstance(c, dict) else c)[:800] for c in chunks[:6]
-            )[:6000]
-        return "Keine multimodalen Treffer."
+        if not (isinstance(chunks, list) and chunks):
+            return "Keine multimodalen Treffer."
+        out = []
+        for c in chunks:
+            if isinstance(c, dict):
+                meta = c.get("metadata") or {}
+                src = (meta.get("original_filename") or meta.get("filename")
+                       or c.get("filename") or "")
+                if only_doc and not (src and _doc_matches(src, only_doc)):
+                    continue  # ohne sicheren Datei-Bezug im scoped-Modus auslassen
+                out.append(str(c.get("content", c))[:800])
+            else:
+                if only_doc:
+                    continue
+                out.append(str(c)[:800])
+            if len(out) >= 6:
+                break
+        if not out:
+            return (f"('{only_doc}' nicht in Morphik.)" if only_doc else "Keine multimodalen Treffer.")
+        return "\n\n".join(out)[:6000]
     except Exception as e:
         log.warning("Morphik-Retrieval fehlgeschlagen (ignoriert): %s", e)
         return "Keine multimodalen Treffer."
