@@ -364,10 +364,14 @@ def mem_add(memory, query: str, answer: str, user_id: str) -> None:
                                  {"role": "assistant", "content": answer}],
                        user_id=user_id)
         else:
-            # infer=False: KEIN fragiler 2-Call-Memory-Manager. Speichert die
-            # User-Aussage direkt (Embedding -> Qdrant), robust + deterministisch.
-            memory.add(messages=[{"role": "user", "content": query}],
-                       user_id=user_id, infer=False)
+            # infer=False: KEIN fragiler 2-Call-Memory-Manager -> robustes Direkt-
+            # Speichern. Nicht jede mem0-Version kennt 'infer' (0.1.40 wirft TypeError)
+            # -> dann ohne das Argument (nutzt den LLM-Manager auf MEM0_LLM_BASE_URL).
+            try:
+                memory.add(messages=[{"role": "user", "content": query}],
+                           user_id=user_id, infer=False)
+            except TypeError:
+                memory.add(messages=[{"role": "user", "content": query}], user_id=user_id)
     except Exception as e:
         log.warning("Mem0-Add fehlgeschlagen (ignoriert): %s", e)
 
@@ -414,10 +418,19 @@ def is_owui_task(messages: list[dict]) -> bool:
 
 
 def owui_real_query(content: str) -> str:
-    """Aus OWUIs RAG-Template die echte <user_query> herausziehen (sonst unveraendert),
-    damit die Pipeline auf der Nutzerfrage statt auf dem Template-Boilerplate arbeitet."""
-    m = _OWUI_USERQ_RE.search(content or "")
-    return m.group(1).strip() if m else (content or "")
+    """Aus OWUIs RAG-Template die echte Nutzerfrage herausziehen (sonst unveraendert),
+    damit die Pipeline darauf statt auf dem Template-Boilerplate arbeitet (sonst wird die
+    ganze 4-KB-Vorlage embeddet/verarbeitet). OWUI haengt die Frage entweder in
+    <user_query>...</user_query> ODER schlicht HINTER </context> an."""
+    c = content or ""
+    m = _OWUI_USERQ_RE.search(c)
+    if m:
+        return m.group(1).strip()
+    if "</context>" in c.lower():
+        tail = re.split(r"</context>", c, flags=re.IGNORECASE)[-1].strip()
+        if tail:
+            return tail
+    return c
 
 
 async def simple_completion(messages: list[dict], temperature: float = 0.3,
@@ -847,19 +860,27 @@ def schedule_ingest(body: dict) -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
+    resolved = []  # (dedup_key, name, content_type, local_path)
     for ref in _owui_file_refs(body):
-        key = ref.get("id") or ref.get("path") or ""
-        if not key or key in _INGESTED:
-            continue
         lp = _owui_local_path(ref)
         if not lp:
             continue
-        _INGESTED.add(key)
         name = ref.get("name") or os.path.basename(lp)
         if ref.get("id") and name.startswith(ref["id"] + "_"):
             name = name[len(ref["id"]) + 1:]
-        t = loop.create_task(_ingest_one_upload(_strip_owui_id_prefix(name),
-                                                ref.get("content_type"), lp))
+        resolved.append((ref.get("id") or lp, _strip_owui_id_prefix(name),
+                         ref.get("content_type"), lp))
+    if not resolved:
+        # resource-id != Upload-Dateiname (kommt vor) -> juengsten Upload nehmen,
+        # genau wie der Volltext-Fallback (sonst feuert der Ingest nie).
+        lp = _recent_upload()
+        if lp:
+            resolved.append((lp, _strip_owui_id_prefix(os.path.basename(lp)), "", lp))
+    for key, name, ctype, lp in resolved:
+        if not key or key in _INGESTED:
+            continue
+        _INGESTED.add(key)
+        t = loop.create_task(_ingest_one_upload(name, ctype, lp))
         _INGEST_TASKS.add(t)
         t.add_done_callback(_INGEST_TASKS.discard)
 
