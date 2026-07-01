@@ -99,9 +99,11 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-      # VLLM_USE_FLASHINFER_MOE_FP4 wirkt nur auf MoE-Layer (35B-A3B). Qwen3.6-27B ist
-      # DENSE -> Flag waere ein No-Op, daher weggelassen. Dense-FP4 laeuft ueber FLASHINFER.
-      - VLLM_ATTENTION_BACKEND=FLASHINFER
+      # Qwen3.6 (model_type qwen3_5_text / GDN-Hybrid) auf Blackwell/SM120: DeepGEMM-E8M0
+      # zerstoert die Genauigkeit (Muell-Output) bzw. crasht im Warmup ("Unknown recipe").
+      # vLLM empfiehlt selbst den CUTLASS-Pfad -> DeepGEMM HART AUS. (Attention-Backend
+      # waehlt vLLM automatisch: FLASH_ATTN fuer FP8.)
+      - VLLM_USE_DEEP_GEMM=0
       # - HF_HUB_OFFLINE=1
     deploy:
       resources:
@@ -110,19 +112,20 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # Wie vllm-main, aber OHNE --speculative-config (kein MTP) UND anderes Modell:
-    # dense Qwen3.6-27B-NVFP4 (256K ctx nativ, coding-stark). Weiter served als "main".
+    # Wie vllm-main, aber OHNE --speculative-config (kein MTP). Modell: Qwen3.6-27B-FP8.
+    # NVFP4/Marlin ist auf SM120 (RTX PRO 6000) kaputt (Muell-Output); FP8 laeuft ueber
+    # CUTLASS sauber. ~28,5 GB Gewichte -> Util 0.43 fuer vollen 256K-Kontext (fp8-KV).
+    # served-model-name bleibt "main" -> Agent/OWUI/RAGFlow unveraendert.
     command: >
-      nvidia/Qwen3.6-27B-NVFP4
+      Qwen/Qwen3.6-27B-FP8
       --served-model-name qwen-main main
       --host 0.0.0.0
       --port 5568
       --trust-remote-code
-      --quantization modelopt
       --max-model-len "260000"
       --kv-cache-dtype fp8
       --max-num-seqs 2
-      --gpu-memory-utilization 0.35
+      --gpu-memory-utilization 0.43
       --enable-chunked-prefill
       --max-num-batched-tokens 8192
       --reasoning-parser qwen3
