@@ -99,7 +99,8 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-      - VLLM_USE_FLASHINFER_MOE_FP4=1
+      # VLLM_USE_FLASHINFER_MOE_FP4 wirkt nur auf MoE-Layer (35B-A3B). Qwen3.6-27B ist
+      # DENSE -> Flag waere ein No-Op, daher weggelassen. Dense-FP4 laeuft ueber FLASHINFER.
       - VLLM_ATTENTION_BACKEND=FLASHINFER
       # - HF_HUB_OFFLINE=1
     deploy:
@@ -109,9 +110,10 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # Identisch zu vllm-main, NUR ohne --speculative-config (kein MTP).
+    # Wie vllm-main, aber OHNE --speculative-config (kein MTP) UND anderes Modell:
+    # dense Qwen3.6-27B-NVFP4 (256K ctx nativ, coding-stark). Weiter served als "main".
     command: >
-      nvidia/Qwen3.6-35B-A3B-NVFP4
+      nvidia/Qwen3.6-27B-NVFP4
       --served-model-name qwen-main main
       --host 0.0.0.0
       --port 5568
