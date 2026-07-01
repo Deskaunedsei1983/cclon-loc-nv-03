@@ -123,6 +123,13 @@ main_up() { dc up -d --build; }
 #  (= fertig geladen + quantisiert). Abschalten:  SERIAL_GPU_LOAD=0 ./start.sh
 SERIAL_GPU_LOAD="${SERIAL_GPU_LOAD:-1}"
 
+# --- Sanity-Check Hauptmodell (kohaerenter Output statt "!!!!"-Muell?) --------
+#  Health=200 heisst NUR "Server oben", NICHT "Antworten sinnvoll". Manche Modell-/
+#  Quant-/Kernel-Kombis auf dieser GPU (SM120: NVFP4/Marlin bzw. DeepGEMM-E8M0)
+#  liefern gueltiges JSON, aber degenerierten Text. Darum EINE Testanfrage nach dem
+#  Start + Heuristik -> wir sehen Muell sofort, ohne manuell zu pruefen. Aus: MAIN_SANITY_CHECK=0
+MAIN_SANITY_CHECK="${MAIN_SANITY_CHECK:-1}"
+
 http_ok() {  # 200-Check, tolerant ggue. fehlendem curl
   if   command -v curl >/dev/null 2>&1; then curl -fsS -o /dev/null "$1" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then wget -q -O /dev/null "$1" 2>/dev/null
@@ -141,6 +148,56 @@ wait_health() {  # wait_health <url> <name> <max_min>
     sleep 15
   done
   echo "   + $name bereit."
+}
+
+main_sanity_check() {  # EINE Testanfrage an das Main-LLM + Muell-Heuristik
+  local out rc
+  out="$(python3 - <<'PY'
+import json, re, sys, urllib.request
+URL = "http://localhost:5568/v1/chat/completions"
+payload = {"model": "main",
+           "messages": [{"role": "user",
+                         "content": "Antworte mit genau diesem Satz: Hallo Welt, hier ist Qwen."}],
+           "max_tokens": 40, "temperature": 0,
+           "chat_template_kwargs": {"enable_thinking": False}}
+req = urllib.request.Request(URL, data=json.dumps(payload).encode(),
+                             headers={"Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req, timeout=180) as r:
+        data = json.load(r)
+except Exception as e:
+    print("nicht erreichbar/Timeout: %s" % e); sys.exit(2)
+msg = (data.get("choices") or [{}])[0].get("message") or {}
+text = ((msg.get("content") or "") or (msg.get("reasoning") or "")).strip()
+def why_garbage(t):
+    if not t:
+        return "leere Antwort"
+    if re.search(r"(\S)\1{14,}", t):            # ein Zeichen 15x am Stueck ("!!!!")
+        return "ein Zeichen 15x wiederholt"
+    toks = t.split()
+    if len(toks) >= 12 and len(set(toks)) / len(toks) < 0.2:  # "d d d d ..."
+        return "nur %d verschiedene Tokens in %d" % (len(set(toks)), len(toks))
+    return ""
+why = why_garbage(text)
+snip = text[:140].replace("\n", " ")
+if why:
+    print("%s :: %r" % (why, snip)); sys.exit(1)
+print("%r" % snip); sys.exit(0)
+PY
+)"
+  rc=$?
+  case "$rc" in
+    0) echo "   + Sanity OK -> Main-LLM antwortet kohaerent: $out" ;;
+    1) echo "   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+       echo "   !!! SANITY-FEHLER: Das Hauptmodell liefert UNSINN ($out)"
+       echo "   !!! Server ist oben, aber Chat-Antworten sind MUELL. Ursache meist"
+       echo "   !!! Kernel/Quant auf dieser GPU (SM120): NVFP4/Marlin bzw. DeepGEMM-E8M0."
+       echo "   !!! Fix in main-qwen-plain: FP8-Modell + VLLM_USE_DEEP_GEMM=0."
+       echo "   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" ;;
+    2) echo "   ! Sanity uebersprungen: Main $out -> spaeter manuell testen." ;;
+    *) echo "   ! Sanity: unerwarteter Status ($rc): $out" ;;
+  esac
+  return 0   # Sanity bricht den Start NIE ab (nur Diagnose)
 }
 
 if [ "$SERIAL_GPU_LOAD" = "1" ]; then
@@ -165,6 +222,15 @@ if [ "$SERIAL_GPU_LOAD" = "1" ]; then
 fi
 
 retry 3 main_up
+
+# --- Sanity-Check Hauptmodell: erst auf Bereitschaft warten, dann 1 Testanfrage ---
+#  Deckt beide Modi ab: seriell (Main laengst oben -> wait_health kehrt sofort zurueck)
+#  und parallel (main_up hat gerade gestartet -> hier warten wir das Laden/Warmup ab).
+if [ "$MAIN_SANITY_CHECK" = "1" ]; then
+  echo ">> Sanity-Check Hauptmodell (wartet auf Bereitschaft, dann 1 Testanfrage)"
+  wait_health "http://localhost:5568/health" "vLLM main" 30
+  main_sanity_check
+fi
 
 echo "================================================================"
 echo ">> Endzustand RAGFlow:"
