@@ -320,6 +320,71 @@ if [ "$MAIN_SANITY_CHECK" = "1" ]; then
   main_sanity_check
 fi
 
+# --- Abschluss-Check: erreichen wir JEDEN erwarteten Dienst? -----------------
+#  Health=200 pro Dienst. Profil-abhaengige Dienste werden nur geprueft, wenn ihr
+#  Profil aktiv ist. Ergebnis als kompakte OK/FEHLT-Liste (bricht nie ab).
+check_all() {
+  local ok=0 bad=0 line name url
+  # name|url|bedingung ("" = immer, sonst Profilname)
+  local CHECKS=(
+    "vLLM main (5568)|http://localhost:5568/health|"
+    "vLLM embed (8091)|http://localhost:8091/health|"
+    "TEI bge-m3 (8082)|http://localhost:8082/health|"
+    "Qdrant (6333)|http://localhost:6333/readyz|"
+    "research-agent (9009)|http://localhost:9009/healthz|"
+    "ingest-router (9010)|http://localhost:9010/healthz|"
+    "Open WebUI (3009)|http://localhost:3009/health|"
+    "RAGFlow API (9380)|http://localhost:9380/v1/system/version|"
+    "Grafana (${GRAFANA_PORT:-3011})|http://localhost:${GRAFANA_PORT:-3011}/api/health|OBS"
+    "Prometheus (${PROMETHEUS_PORT:-9090})|http://localhost:${PROMETHEUS_PORT:-9090}/-/healthy|OBS"
+    "Dozzle (${DOZZLE_PORT:-8085})|http://localhost:${DOZZLE_PORT:-8085}/|OBS"
+    "mem0-struct (8088)|http://localhost:8088/v1/models|mem0struct"
+    "vLLM helper (30001)|http://localhost:30001/health|helper"
+    "Morphik (8083)|http://localhost:8083/health|morphik"
+    "microVM-Executor (8077)|http://localhost:8077/healthz|microvm"
+    "computer-use (8084)|http://localhost:8084/|computer-use"
+    "Fragments (3010)|http://localhost:3010/|fragments"
+  )
+  echo "   --- Erreichbarkeit (HTTP) ---"
+  for line in "${CHECKS[@]}"; do
+    name="${line%%|*}"; url="${line#*|}"; local cond="${url#*|}"; url="${url%%|*}"
+    case "$cond" in
+      "") : ;;                                     # immer pruefen
+      SKIP) continue ;;                            # nur intern erreichbar
+      OBS) [ "$LOGGING_STACK" = "1" ] || continue ;;
+      *) case "$SEEN" in *" $cond "*) : ;; *) continue ;; esac ;;
+    esac
+    if http_ok "$url"; then
+      printf "     [ OK   ] %s\n" "$name"; ok=$((ok+1))
+    else
+      printf "     [ FEHLT] %s  -> %s\n" "$name" "$url"; bad=$((bad+1))
+    fi
+  done
+  echo "   --- $ok erreichbar, $bad nicht erreichbar ---"
+  if [ "$bad" -gt 0 ]; then
+    echo "   ! Nicht erreichbare Dienste koennen noch STARTEN (grosse Modelle/Images)."
+    echo "     Pruefen:  docker compose ps   |   docker logs <container>   |   Dozzle/Grafana"
+  fi
+}
+
+# Container, die (unerwartet) NICHT laufen -> haeufigste Ursache: fehlgeschlagener Pull/Build
+check_containers() {
+  echo "   --- Container-Status ---"
+  local bad
+  bad="$(docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" ps \
+          --format '{{.Service}}\t{{.State}}' 2>/dev/null | grep -viE 'running|healthy' || true)"
+  if [ -n "$bad" ]; then
+    echo "   ! Diese Dienste laufen NICHT:"; echo "$bad" | sed 's/^/       /'
+  else
+    echo "     alle gestarteten Dienste laufen."
+  fi
+}
+
+echo "================================================================"
+echo ">> Abschluss-Pruefung"
+check_containers
+check_all
+
 echo "================================================================"
 echo ">> Endzustand RAGFlow:"
 ( cd ragflow && docker compose ps ) 2>&1 || true

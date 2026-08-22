@@ -146,7 +146,9 @@ services:
 
   # Pro-Container-Metriken: CPU/RAM/Netz/Disk (auch "interner" Container-Verkehr)
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.60.5 # 08/2026, drop-in
+    image: gcr.io/cadvisor/cadvisor:v0.55.1 # neuester Tag, den es auf gcr.io WIRKLICH gibt
+    # (die GitHub-Releases laufen den gepushten Images voraus -> Tags immer gegen
+    #  die Registry pruefen: https://gcr.io/v2/cadvisor/cadvisor/tags/list)
     container_name: cadvisor
     restart: unless-stopped
     privileged: true
