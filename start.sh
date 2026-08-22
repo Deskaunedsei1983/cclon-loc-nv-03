@@ -450,16 +450,27 @@ check_all() {
   fi
 }
 
-# Container, die (unerwartet) NICHT laufen -> haeufigste Ursache: fehlgeschlagener Pull/Build
+# SOLL-/IST-Vergleich: welche Dienste der aktiven Profile laufen NICHT?
+#  Wichtig: nicht nur die von 'compose ps' gelisteten pruefen — ein Dienst, der nie
+#  erstellt wurde (Build/Pull-Fehler, Namenskonflikt), taucht dort GAR NICHT auf und
+#  waere sonst unsichtbar ("alle gestarteten laufen" trotz fehlender Dienste).
 check_containers() {
-  echo "   --- Container-Status ---"
-  local bad
-  bad="$(docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" ps \
-          --format '{{.Service}}\t{{.State}}' 2>/dev/null | grep -viE 'running|healthy' || true)"
-  if [ -n "$bad" ]; then
-    echo "   ! Diese Dienste laufen NICHT:"; echo "$bad" | sed 's/^/       /'
+  echo "   --- Dienste (Soll/Ist) ---"
+  local want have missing bad
+  want="$(dc config --services 2>/dev/null | sort -u)"
+  have="$(dc ps --services --status running 2>/dev/null | sort -u)"
+  if [ -z "$want" ]; then echo "     (Dienstliste nicht ermittelbar)"; return 0; fi
+  missing="$(comm -23 <(printf '%s\n' "$want") <(printf '%s\n' "$have") 2>/dev/null)"
+  bad="$(dc ps -a --format '{{.Service}}\t{{.State}}\t{{.Status}}' 2>/dev/null \
+         | grep -viE '\brunning\b' || true)"
+  echo "     erwartet: $(printf '%s\n' "$want" | grep -c .)   laufend: $(printf '%s\n' "$have" | grep -c .)"
+  if [ -n "$missing" ]; then
+    echo "   ! Diese Dienste laufen NICHT:"
+    printf '%s\n' "$missing" | sed 's/^/       - /'
+    [ -n "$bad" ] && { echo "     Details (Status):"; printf '%s\n' "$bad" | sed 's/^/       /'; }
+    echo "     -> Ursache:  docker compose logs --tail=40 <dienst>"
   else
-    echo "     alle gestarteten Dienste laufen."
+    echo "     [ OK ] alle erwarteten Dienste laufen."
   fi
 }
 
