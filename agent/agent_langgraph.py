@@ -65,6 +65,23 @@ def _strip_toolcalls(text: str) -> str:
     return t.strip()
 
 
+def _text(resp) -> str:
+    """AIMessage -> str. langchain 1.x kann .content je nach output_version als LISTE
+    von Content-Blocks liefern (statt str) -> Text-Blocks extrahieren und joinen."""
+    c = getattr(resp, "content", resp)
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts = []
+        for b in c:
+            if isinstance(b, str):
+                parts.append(b)
+            elif isinstance(b, dict) and b.get("type") in (None, "text"):
+                parts.append(b.get("text", ""))
+        return "".join(parts)
+    return str(c or "")
+
+
 class State(TypedDict, total=False):
     query: str
     mem_context: str
@@ -149,7 +166,7 @@ async def draft(state: State) -> State:
     sys = _SYS_ORCHESTRATED + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context()
     resp = await _llm.ainvoke([{"role": "system", "content": sys},
                                {"role": "user", "content": "\n".join(parts)}])
-    return {"draft": _strip_toolcalls(resp.content), "iteration": state.get("iteration", 0) + 1}
+    return {"draft": _strip_toolcalls(_text(resp)), "iteration": state.get("iteration", 0) + 1}
 
 
 async def execute(state: State) -> State:
@@ -220,7 +237,7 @@ async def verify(state: State) -> State:
     qresp = await _llm_strict.ainvoke(
         [{"role": "system", "content": C.now_context() + "\n\n" + _EXTRACT_SYS % VERIFY_MAX_QUERIES},
          {"role": "user", "content": f"Entwurf:\n{draft_text}\n\nBelege:\n{state.get('retrieved','')}"}])
-    queries = _queries_from(qresp.content)
+    queries = _queries_from(_text(qresp))
     if not queries:
         return {"verified": True, "verification": ""}
 
@@ -235,7 +252,7 @@ async def verify(state: State) -> State:
     cresp = await _llm_strict.ainvoke(
         [{"role": "system", "content": C.now_context() + "\n\n" + _COMPARE_SYS},
          {"role": "user", "content": f"Entwurf:\n{draft_text}\n\nWeb-Treffer:\n" + "\n\n".join(evidence)}])
-    notes = cresp.content.strip()
+    notes = _text(cresp).strip()
     if notes.upper() == "KEINE":
         notes = ""
     return {"verified": True, "verification": notes}
@@ -253,7 +270,7 @@ async def critic(state: State) -> State:
            f"Web-Gegenpruefung:\n{state.get('verification') or '(keine pruefbaren Aussagen)'}")
     resp = await _llm.ainvoke([{"role": "system", "content": C.now_context() + "\n\n" + judge},
                                {"role": "user", "content": ctx}])
-    text = resp.content.strip()
+    text = _text(resp).strip()
     approved = text.upper().startswith("APPROVE") or state.get("iteration", 0) >= MAX_ITER
     # Sicherheitsnetz Volltext: Naeherungen/Platzhalter ('< 100', 'nicht in Top-N', 'ca.')
     # statt exakter, code-gezaehlter Werte -> Revise erzwingen (bis MAX_ITER).

@@ -11,6 +11,7 @@ import json
 import uuid
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -32,12 +33,10 @@ if IMPL == "pydantic":
 else:
     from agent_langgraph import run_agent
 
-app = FastAPI(title="research-agent (OpenAI-compatible)")
-MODEL_ID = "research-agent"
-
-
-@app.on_event("startup")
-async def _start_blocklist_refresh():
+# Lifespan statt @app.on_event("startup"): on_event ist seit FastAPI 0.93 deprecated
+# und faellt mit neueren Starlette-Versionen weg.
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
     """Liest die (vom blocklist-fetcher-Sidecar gepflegte) Blocklist-Datei beim Start
     und danach periodisch neu. KEIN Netzzugriff im Agent."""
     C.load_blocklist()
@@ -47,7 +46,15 @@ async def _start_blocklist_refresh():
             await asyncio.sleep(max(5, C.BLOCKLIST_REFRESH_MIN) * 60)
             C.load_blocklist()
 
-    asyncio.create_task(_loop())
+    task = asyncio.create_task(_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(title="research-agent (OpenAI-compatible)", lifespan=_lifespan)
+MODEL_ID = "research-agent"
 
 
 @app.get("/v1/models")

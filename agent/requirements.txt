@@ -1,28 +1,36 @@
-# [VERIFY] funktionierender Stand; PydanticAI/Mem0/LangGraph entwickeln sich
-# schnell — bei API-Drift anpassen (siehe README).
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
+# Stand 2026-08 — versions-auditiert (PyPI latest + CVE-Scan via OSV/PyPI, Stand 22.08.2026).
+# Kompatibilitaets-Kern: openai 3.x wird von ALLEN Konsumenten getragen —
+#   pydantic-ai-slim 2.x verlangt openai>=3, langchain-openai 1.6 erlaubt <4,
+#   mem0ai 2.x hat KEINEN openai-Deckel mehr. (Die alte <2-Deckel-Lage ist Geschichte.)
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
 httpx==0.28.1
-# pydantic-ai 1.x verlangt openai>=1.99.9; langchain-openai/mem0ai deckeln <2.0.0
-# -> gemeinsame Schnittmenge [1.99.9, 2.0). Frueher 1.59.6 -> ResolutionImpossible.
-openai>=1.99.9,<2
+openai==3.3.1
 
-# Variante 1: PydanticAI = Tool-Calling-Agent (jetzt DEFAULT, AGENT_IMPL=pydantic).
-#   Braucht 1.x (die alte 0.0.20 kennt 'pydantic_ai.providers' nicht und fiele still
-#   auf LangGraph zurueck). Floor-Pin statt exaktem Patch, weil sich die 1.x-API
-#   schnell bewegt; agent_pydantic.py faengt den OpenAIModel/OpenAIChatModel-Rename ab.
-pydantic-ai-slim[openai]>=1.0,<2
+# Variante 1: PydanticAI = Tool-Calling-Agent (Default, AGENT_IMPL=pydantic).
+#   2.x: Alias 'OpenAIModel' entfernt -> Code importiert OpenAIChatModel (Fallback-Import).
+#   OpenAIProvider(base_url=, api_key=) und Agent(system_prompt=, retries=) bestehen fort
+#   (gegen v2.33.0-Quellcode verifiziert).
+pydantic-ai-slim[openai]>=2.33.0,<3
 
-# Variante 2: LangGraph-Critic
-langgraph==0.2.62
-langchain-openai==0.2.14
+# Variante 2: LangGraph-Critic. langgraph 1.x: StateGraph/START/END-API unveraendert;
+# schliesst CVE-2026-28277 (Checkpoint-Deserialisierung). langchain-openai >=1.1.14
+# schliesst CVE-2026-41488; resp.content kann als Content-Blocks (Liste) kommen ->
+# agent_langgraph._text() normalisiert.
+langgraph==1.2.11
+langchain-openai==1.6.0
 
-# Gedaechtnis
-mem0ai==0.1.40
-qdrant-client==1.12.1
+# Gedaechtnis. mem0ai 2.x schliesst CVE-2026-7597 (pickle-RCE im FAISS-Pfad).
+# API-Wechsel (gegen v2.0.18-Quellcode verifiziert): search()/get_all() verlangen
+# filters={"user_id": ...} statt Top-Level-user_id; add() behaelt user_id= und infer=.
+# WICHTIG: OHNE Extra '[extras]' installieren (nur dessen Marker deckelt langchain-core<1).
+mem0ai==2.0.18
+qdrant-client==1.19.0
 
-# Morphik-Auth: selbst signierter HS256-JWT (sonst 401 "Not enough segments")
-PyJWT==2.10.1
+# Morphik-Auth: selbst signierter HS256-JWT. 2.13.0 schliesst die 2026er JWT-CVEs
+# (crit-Header CVE-2026-32597, Algorithm-Confusion CVE-2026-48523 u.a.).
+PyJWT==2.13.0
 
-# Volltext-Modus: PDF-Parsing (epub/docx/txt/html laufen ueber die Standardbibliothek).
-pypdf==5.1.0
+# Volltext-Modus: PDF-Parsing. pypdf 6.16 schliesst die DoS-Serie praeparierter PDFs
+# (73 Advisories seit 5.1.0 — Agent parst NUTZER-Uploads, daher Pflicht-Bump).
+pypdf==6.16.1

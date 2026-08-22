@@ -636,7 +636,9 @@ services:
 
   # ===================== 9) OPEN WEBUI (Frontend) ===========================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:0.9.5
+    image: ghcr.io/open-webui/open-webui:0.9.6 # letzter Patch der 0.9.x-Linie (08/2026).
+    # BEWUSST kein 0.10/0.11-Major: Volltext-/Filter-/Task-Model-Kette haengt an 0.9.x-
+    # Verhalten; vor einem Major-Bump webui.db sichern (Migration, kein Downgrade).
     container_name: open-webui
     restart: unless-stopped
     ports:
@@ -814,7 +816,8 @@ services:
 
   morphik-redis:
     profiles: ["morphik"]
-    image: redis:7-alpine
+    image: redis:8-alpine # 8.x-Linie (schliesst u.a. CVE-2025-49844 "RediShell"-Serie);
+    # liest 7er-Daten, danach KEIN Downgrade. Nur Morphik-Cache -> risikoarm.
     container_name: morphik_redis
     restart: unless-stopped
     networks:

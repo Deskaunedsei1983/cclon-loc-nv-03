@@ -27,7 +27,7 @@
 services:
   # ---------- Log-Speicher ----------
   loki:
-    image: grafana/loki:3.3.0
+    image: grafana/loki:3.7.6   # 08/2026; 3.3 war aus dem Support-Fenster
     container_name: loki
     restart: unless-stopped
     command: -config.file=/etc/loki/loki-config.yml
@@ -41,7 +41,9 @@ services:
 
   # ---------- Log-Sammler (Docker-Socket -> Loki) ----------
   promtail:
-    image: grafana/promtail:3.3.0
+    image: grafana/promtail:3.6.11 # 08/2026. HINWEIS: Promtail ist offiziell deprecated
+    # (Nachfolger: grafana/alloy, anderes Konfig-Format). Liest nur lokal den Docker-
+    # Socket (kein Netz-Exposure) -> Migration auf Alloy als separates TODO.
     container_name: promtail
     restart: unless-stopped
     command: -config.file=/etc/promtail/promtail-config.yml
@@ -57,7 +59,8 @@ services:
 
   # ---------- Web-UI: durchsuchbare, persistente Logs + Dashboard ----------
   grafana:
-    image: grafana/grafana:11.4.0
+    image: grafana/grafana:13.2.0 # 08/2026; 11.4.0 hatte offene CVEs (u.a. CVE-2025-4123
+    # "Grafana Ghost" XSS/Account-Takeover). Dashboards sind reine React-Panels -> kompatibel.
     container_name: grafana
     restart: unless-stopped
     ports:
@@ -109,7 +112,8 @@ services:
   #  kann: GPU/VRAM, Disk-I/O, Netz in/out, alles pro Host UND pro Container.
   # ===========================================================================
   prometheus:
-    image: prom/prometheus:v2.55.1
+    image: prom/prometheus:v3.14.0 # 08/2026; v2 erhaelt keine Fixes mehr. Unsere simple
+    # scrape-Config ist v3-kompatibel (geprueft). ACHTUNG: nach v3-Start kein TSDB-Downgrade.
     container_name: prometheus
     restart: unless-stopped
     command:
@@ -127,7 +131,7 @@ services:
 
   # Host-Metriken: CPU/RAM/Disk-I/O/Netz pro Interface
   node-exporter:
-    image: prom/node-exporter:v1.8.2
+    image: prom/node-exporter:v1.12.1 # 08/2026, drop-in
     container_name: node-exporter
     restart: unless-stopped
     command:
@@ -142,7 +146,7 @@ services:
 
   # Pro-Container-Metriken: CPU/RAM/Netz/Disk (auch "interner" Container-Verkehr)
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.60.5 # 08/2026, drop-in
     container_name: cadvisor
     restart: unless-stopped
     privileged: true

@@ -9,9 +9,11 @@ EMPFOHLEN: auf dem HOST betreiben (KVM/libkrun laufen dort am stabilsten,
 rootless). Siehe README.md. Der Agent erreicht ihn dann ueber
 http://host.docker.internal:8077/run.
 
-[VERIFY] Die genauen SDK-Attribute (stdout_text/stderr/exit_code) und der
-Server-/Verbindungsmodus koennen sich je Microsandbox-Version unterscheiden —
-defensiv abgefragt; bei Bedarf anpassen (microsandbox v0.5.x).
+SDK 0.6.x (gegen die v0.6.13-Stubs verifiziert): Sandbox.create(name, image=,
+cpus=, memory=) und sandbox.exec(cmd, args) -> ExecOutput mit .exit_code/
+.stdout_text/.stderr_text bestehen fort; stop_and_wait() wurde durch stop()
+ersetzt (im finally defensiv abgedeckt). Das 0.6-Wheel buendelt den msb-Runtime
++ libkrunfw — ein separater msb-Server ist nicht mehr noetig.
 """
 
 import os
@@ -79,7 +81,21 @@ async def run(req: RunReq):
                 "files": [], "work_dir": "microvm"}
     finally:
         if sandbox is not None:
+            # SDK 0.6.x: stop(); stop_and_wait() gab es nur in 0.5.x. Danach die
+            # benannte Sandbox entfernen, damit der naechste create() nicht kollidiert.
+            for meth in ("stop", "stop_and_wait", "kill"):
+                fn = getattr(sandbox, meth, None)
+                if fn is None:
+                    continue
+                try:
+                    await fn()
+                    break
+                except Exception:
+                    continue
             try:
-                await sandbox.stop_and_wait()
+                from microsandbox import Sandbox as _S
+                rm = getattr(_S, "remove", None)
+                if rm is not None:
+                    await rm("agent-run")
             except Exception:
                 pass

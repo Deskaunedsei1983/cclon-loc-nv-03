@@ -1,11 +1,17 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
+# Stand 2026-08 — versions-auditiert (PyPI latest + CVE-Scan, 22.08.2026).
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
 httpx==0.28.1
-python-multipart==0.0.20
+# python-multipart 0.0.32: schliesst die DoS-/Path-Traversal-Serie im Upload-Parser
+# (CVE-2026-24486, CVE-2026-40347, CVE-2026-42561, CVE-2026-53538..53540) — dieser
+# Dienst parst ALLE Chat-Uploads, daher Pflicht-Bump. (Import-Name im Code waere
+# 'python_multipart'; wir nutzen es nur indirekt ueber FastAPI/Starlette.)
+python-multipart==0.0.32
 # Klassifikation: Textdichte (pypdf, leicht) + Tabellen-Erkennung (pdfplumber).
 # pdfplumber zieht pdfminer.six + Pillow; faellt es weg, ueberspringt der Router
 # den Tabellen-Check (Textdichte bleibt). Bewusst schlank, kein GPU.
-pypdf==5.1.0
-pdfplumber==0.11.4
-# Morphik-Auth: selbst signierter HS256-JWT (sonst 401 "Not enough segments")
-PyJWT==2.10.1
+# pypdf 6.16: DoS-Serie ueber praeparierte PDFs geschlossen (parst fremde Uploads!).
+pypdf==6.16.1
+pdfplumber==0.11.10
+# Morphik-Auth: selbst signierter HS256-JWT. 2.13.0 schliesst die 2026er JWT-CVEs.
+PyJWT==2.13.0

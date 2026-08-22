@@ -345,7 +345,13 @@ def mem_search(memory, query: str, user_id: str) -> str:
     if not memory or not query:
         return ""
     try:
-        hits = memory.search(query=query, user_id=user_id, limit=5)
+        try:
+            # mem0 >= 2.x: Scoping NUR noch via filters (Top-Level user_id wird
+            # explizit abgelehnt); limit heisst top_k.
+            hits = memory.search(query=query, filters={"user_id": user_id}, top_k=5)
+        except TypeError:
+            # mem0 0.x/1.x: alte Signatur.
+            hits = memory.search(query=query, user_id=user_id, limit=5)
         items = hits.get("results", hits) if isinstance(hits, dict) else hits
         facts = [h.get("memory", "") for h in items][:5]
         if facts:
@@ -365,8 +371,8 @@ def mem_add(memory, query: str, answer: str, user_id: str) -> None:
                        user_id=user_id)
         else:
             # infer=False: KEIN fragiler 2-Call-Memory-Manager -> robustes Direkt-
-            # Speichern. Nicht jede mem0-Version kennt 'infer' (0.1.40 wirft TypeError)
-            # -> dann ohne das Argument (nutzt den LLM-Manager auf MEM0_LLM_BASE_URL).
+            # Speichern. mem0 >= 2.x kennt 'infer' offiziell (gegen v2.0.18-Quelle
+            # verifiziert); der TypeError-Fallback deckt nur noch Uralt-Installs ab.
             try:
                 memory.add(messages=[{"role": "user", "content": query}],
                            user_id=user_id, infer=False)

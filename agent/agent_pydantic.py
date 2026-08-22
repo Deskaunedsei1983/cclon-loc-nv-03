@@ -12,13 +12,13 @@ from dataclasses import dataclass
 import httpx
 
 from pydantic_ai import Agent, RunContext
-# pydantic-ai 1.x hat OpenAIModel -> OpenAIChatModel umbenannt (alter Name bleibt
-# eine Weile als Alias). Beide Faelle abfangen, damit der Tool-Calling-Pfad ueber
-# 1.x-Versionen hinweg zuverlaessig laedt (sonst stiller Fallback auf LangGraph).
+# pydantic-ai 2.x kennt NUR noch OpenAIChatModel (der alte Alias 'OpenAIModel' ist
+# entfernt — gegen v2.33.0-Quelle verifiziert); 0.x/fruehe 1.x kannten nur OpenAIModel.
+# Kanonischen Namen zuerst probieren, Alt-Alias als Fallback.
 try:
-    from pydantic_ai.models.openai import OpenAIModel
-except ImportError:  # neuere 1.x
     from pydantic_ai.models.openai import OpenAIChatModel as OpenAIModel
+except ImportError:  # sehr alte pydantic-ai-Versionen
+    from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 import common as C
@@ -68,7 +68,8 @@ if C.MORPHIK_API_URL:
 
 
 def _result_text(result) -> str:
-    return getattr(result, "output", None) or getattr(result, "data", None) or str(result)
+    # '.data' wurde mit pydantic-ai 1.0 entfernt; '.output' ist der kanonische Zugriff.
+    return getattr(result, "output", None) or str(result)
 
 
 async def run_agent(messages: list[dict], user_id: str = "owui",

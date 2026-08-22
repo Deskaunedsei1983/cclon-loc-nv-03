@@ -96,7 +96,7 @@ services:
 
   morphik-redis:
     profiles: ["morphik"]
-    image: redis:7-alpine
+    image: redis:8-alpine # wie im Hauptfile: 8.x, liest 7er-Daten, kein Downgrade
     container_name: morphik_redis
     restart: unless-stopped
     networks:

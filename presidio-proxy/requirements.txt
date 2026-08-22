@@ -1,6 +1,13 @@
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
+# Stand 2026-08 — versions-auditiert (PyPI latest + CVE-Scan, 22.08.2026).
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
 httpx==0.28.1
-presidio-analyzer==2.2.355
-presidio-anonymizer==2.2.355
-spacy==3.7.5
+# presidio 2.2.364: API-stabil ggue. 2.2.355 (AnalyzerEngine/AnonymizerEngine
+# unveraendert); spacy-Range dort: >=3.4.4,!=3.7.0,<4 -> 3.8.15 abgedeckt.
+# Hinweis: presidio-analyzer verlangt numpy<2.5 (nur dieser Container).
+presidio-analyzer==2.2.364
+presidio-anonymizer==2.2.364
+# spacy 3.8: 'spacy download' loest de_core_news_lg/en_core_web_lg auf die
+# passenden 3.8.0-Modelle auf (Dockerfile unveraendert). NER-Raender koennen
+# sich ggue. 3.7-Modellen minimal verschieben.
+spacy==3.8.15
