@@ -23,7 +23,7 @@ eigene neue Docker-Netze, eigenes RAGFlow, eigene Volumes.
 ```
    ┌──────────────────── aistack-core (Bridge, MIT Internet) ─────────────────────┐
    │                                                                               │
-   │  Open WebUI ──┬─► vllm-main   (Qwen NVFP4 | Gemma-Diffusion NVFP4)   [GPU]    │
+   │  Open WebUI ──┬─► vllm-main   (Nemotron NVFP4 | Qwen NVFP4)          [GPU]    │
    │   (:3009)     ├─► vllm-helper (Qwen3.5-4B)                           [GPU]    │
    │               └─► research-agent ─┐                                           │
    │  embeddings(bge-m3)[GPU]  Qdrant(on-disk) ◄─┤ Mem0                            │
@@ -57,84 +57,41 @@ Morphik) · Ausführung (luftdichte Sandbox) · Frontend (Open WebUI).
 
 ---
 
-## 1a. Hauptmodell umschalten: Qwen ⇄ Gemma-Diffusion (per `.env`)
+## 1a. Hauptmodell umschalten (per `.env`)
 
-Das **Haupt-LLM** ist umschaltbar — entweder das bisherige **Qwen** *oder* das
-**Gemma-Diffusion**-Modell, **nie beide gleichzeitig** (sonst doppelter VRAM).
+Das **Haupt-LLM** ist umschaltbar — es laeuft **immer nur eines** (sonst doppelter VRAM).
 Die Auswahl steckt in **einer** Zeile der `.env` (Docker-Compose-Profil):
 
 ```ini
 # genau EINEN Wert setzen:
-COMPOSE_PROFILES=main-qwen     # nvidia/Qwen3.6-35B-A3B-NVFP4           (Standard)
-# COMPOSE_PROFILES=main-gemma  # nvidia/diffusiongemma-26B-A4B-IT-NVFP4 (Diffusion, 256k)
+COMPOSE_PROFILES=main-nemotron,mem0struct     # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (Default)
+# COMPOSE_PROFILES=main-qwen,mem0struct       # nvidia/Qwen3.6-35B-A3B-NVFP4  + MTP
+# COMPOSE_PROFILES=main-qwen-plain,mem0struct # unsloth/Qwen3.6-27B-NVFP4     ohne MTP
 ```
 
-- Beide Varianten hängen am **gleichen Hostnamen** `vllm-main:5568` (Netzwerk-Alias)
+| Profil | Modell | Kernparameter |
+|---|---|---|
+| `main-nemotron` **(Default)** | Nemotron-3.5-Lightning-30B-A3B-NVFP4 — hybrides **Mamba-MoE**, 30B total / 3B aktiv | `--kv-cache-dtype fp8` · `--moe-backend marlin` · `--mamba-backend flashinfer` · `--mamba-cache-mode align` · `--enable-prefix-caching` · `--max-num-batched-tokens 16384` · `--reasoning-parser nemotron_v3` · `--tool-call-parser qwen3_coder` · **DSpark**-Speculative-Decoding (3 Tokens) · 260k |
+| `main-qwen` | Qwen3.6-35B-A3B-NVFP4 | **MTP**-Speculative-Decoding, `qwen3`-Parser, 260k, KV fp8 |
+| `main-qwen-plain` | unsloth/Qwen3.6-27B-NVFP4 | ohne MTP → sauberes Structured Output (gut fuer `mem0 infer=true`) |
+
+- Alle Varianten haengen am **gleichen Hostnamen** `vllm-main:5568` (Netzwerk-Alias)
   und liefern die **stabile Modell-ID `main`** → **Agent, Open WebUI, RAGFlow und
-  computer-use bleiben unverändert**. (Qwen antwortet zusätzlich weiter auf `qwen-main`,
-  Gemma zusätzlich auf `gemma-main`.)
+  computer-use bleiben unveraendert**.
 - `./start.sh` liest die Auswahl aus der `.env`, erzwingt **genau ein** Hauptmodell
-  (Default `main-qwen`) und **bricht ab**, falls versehentlich beide gesetzt sind.
-- Helfer-LLM, Embeddings, Agent usw. laufen davon **unabhängig** weiter.
-- Umschalten (altes stoppen, neues starten):
-  ```bash
-  # in .env COMPOSE_PROFILES=main-gemma setzen, dann z.B.:
-  docker compose -f docker-compose.yml --profile main-qwen  down            # altes Hauptmodell weg
-  docker compose -f docker-compose.yml --profile main-gemma up -d vllm-main-gemma
-  # bequemer (macht beides passend):  ./start.sh
-  ```
+  und **bricht ab**, falls versehentlich mehrere gesetzt sind. Danach laeuft ein
+  **automatischer Sanity-Check** (eine Testanfrage + Heuristik), der degenerierte
+  Ausgaben („!!!!") sofort meldet.
+- Umschalten: Profil in der `.env` aendern, alten Container entfernen
+  (`docker rm -f vllm_main vllm_main_qwen_plain vllm_main_nemotron`), dann `./start.sh`.
 
-**Gemma-Start — an SM120/Blackwell, 256k & VRAM-Sparsamkeit angepasst (Kernparameter):**
-`--max-model-len 262144` (256k) · `--gpu-memory-utilization 0.35` ·
-`--max-num-seqs 2` (keine Multi-Request-/VRAM-Überbelegung, „wie bisher"; Model-Card
-nennt 4) · Env `VLLM_USE_V2_MODEL_RUNNER=1` · Env `VLLM_ATTENTION_BACKEND=TRITON_ATTN`
-(≙ Model-Card-Flag `--attention-backend TRITON_ATTN`, hier als Env, da auf dem Image
-erprobt) · `--tool-call-parser gemma4 --reasoning-parser gemma4 --enable-auto-tool-choice` ·
-`--override-generation-config '{"max_new_tokens":null}'` (Diffusion) ·
-`--default-chat-template-kwargs '{"enable_thinking":true}'`. NVFP4 wird i. d. R.
-automatisch erkannt; sonst `--quantization modelopt` ergänzen.
+**Nemotron-Stellschrauben** (`.env`): `NEMOTRON_MAX_LEN` (260000) ·
+`NEMOTRON_GPU_UTIL` (0.40) · `NEMOTRON_SPEC_TOKENS` (3).
 
-**vLLM-Version:** Gemma-Diffusion braucht vLLM **≥ `0.22.1rc1.dev332`**. Daher ist das
-Image für alle drei vLLM-Dienste über `.env` → **`VLLM_IMAGE`** pinnbar (statt des
-rollierenden `:nightly`). Vorbelegt mit einem geprüften, reproduzierbaren Build
-`vllm/vllm-openai:cu129-nightly-6607a80d…` (2026‑06‑16, **CUDA 12.9** für
-SM120/Blackwell, weit über `dev332`). Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/vllm/vllm-openai/tags).
-
----
-
-## 1b. Gemma-Reasoning: `<|channel>thought`-Leak (✅ gefixt im aktuellen Image)
-
-**Status: behoben.** Mit dem gepinnten Image `cu129-nightly-6607a80d…` (vLLM
-`0.23.1rc1.dev41`) ist der vLLM-Bug [#38855](https://github.com/vllm-project/vllm/issues/38855)
-**gefixt**: das Reasoning landet sauber im Feld `message.reasoning` (kein roher
-`<|channel>`-Text mehr im `content`) → OWUI rendert es als einklappbares „Thinking".
-
-> **Wichtig bei Thinking-Modellen — genug `max_tokens`!** Das Reasoning verbraucht
-> Budget. Ist `max_tokens` zu niedrig (z. B. 400), geht **alles** ins Reasoning und
-> `content` bleibt **leer** (`finish_reason: length`). In OWUI großzügig setzen (≥ 2000).
-
-**Diagnose / Gegencheck:**
-```bash
-curl -s http://localhost:5568/v1/chat/completions -H 'Content-Type: application/json' -d '{
-  "model":"main",
-  "messages":[{"role":"user","content":"Nenne 3 nachhaltige ETFs. Denk kurz nach."}],
-  "max_tokens":2000
-}' | python3 -m json.tool
-```
-Erwartung: `choices[0].message.reasoning` befüllt **und** `content` mit der sauberen
-Antwort. Steckt `<|channel>` doch in `content`, ist das Image zu alt → `VLLM_IMAGE` neuer pinnen.
-
-**Fallback nur für ältere Images (OWUI-Filter):** `open-webui/filters/gemma_reasoning_cleaner.py`
-importieren (*OWUI → Admin → Functions → „+"*) und `main`/`gemma-main` zuweisen — übersetzt
-`<|channel>thought … <channel|>` in natives `<think>…</think>`. Beim aktuellen Image **nicht nötig**.
-
-**3) Saubere Notlösung ohne Thinking:** im Gemma-Serve-Command (docker-compose.yml)
-`--default-chat-template-kwargs '{"enable_thinking":false}'` → kein Denk-Kanal, kein Leak
-(dafür keine Chain-of-Thought). Vorab live testbar, indem du im curl oben
-`"chat_template_kwargs":{"enable_thinking":false}` ergänzt.
-
-> Status verfolgen: [vllm#38855](https://github.com/vllm-project/vllm/issues/38855). Sobald
-> upstream gefixt, einfach ein neueres `VLLM_IMAGE`-Nightly ziehen — dann ist der Filter überflüssig.
+**vLLM-Version:** Nemotron 3.5 Lightning verlangt laut offizieller vLLM-Recipe
+**≥ 0.27.1** — das ist zugleich der aktuelle **stabile** Stand. Ueber `.env` →
+**`VLLM_IMAGE`** (`vllm/vllm-openai:v0.27.1`) fuer alle vLLM-Dienste gepinnt.
+Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/vllm/vllm-openai/tags).
 
 ---
 
@@ -142,7 +99,7 @@ importieren (*OWUI → Admin → Functions → „+"*) und `main`/`gemma-main` z
 
 | claude.ai | Hier durch |
 |---|---|
-| Chat mit starkem Modell | vLLM (Qwen3.5-35B-A3B NVFP4) |
+| Chat mit starkem Modell | vLLM (Nemotron-3.5-Lightning-30B-A3B NVFP4 + DSpark) |
 | Artifacts (HTML/SVG/JS) | OWUI Artifacts-Panel (HTML/JS/SVG, single-file React via CDN) |
 | Code-Ausführung/-Korrektur | OWUI Code-Interpreter → Jupyter-Sandbox (iteriert bei Fehlern); Agent → **Microsandbox-microVM** (hardware-isoliert) |
 | Skills / Office-Dateien | System-Prompt + Sandbox mit python-docx/openpyxl/python-pptx/reportlab |
@@ -241,7 +198,7 @@ RAGFlow bringt **keine** Modelle mit — du verkabelst es mit deinem vLLM:
 1. RAGFlow-UI öffnen: **http://localhost** → Konto anlegen (lokal).
 2. **Model Providers** → einen **OpenAI-kompatiblen** Anbieter hinzufügen:
    - Chat-Modell: Base-URL **`http://host.docker.internal:5568/v1`**, Modell `main`, Key beliebig.
-     *(`main` zeigt immer auf das aktive Hauptmodell — überlebt das Qwen⇄Gemma-Umschalten.)*
+     *(`main` zeigt immer auf das aktive Hauptmodell — überlebt das Profil-Umschalten.)*
    - Embedding-Modell (**empfohlen**): den starken, multilingualen vLLM-Embedder
      eintragen — OpenAI-kompatibel, Base-URL **`http://host.docker.internal:8091/v1`**,
      Modell **`qwen3-embed`**, Dimension **4096**. *(Das ist der `vllm-embed`-Dienst,
@@ -264,7 +221,7 @@ RAGFlow bringt **keine** Modelle mit — du verkabelst es mit deinem vLLM:
 ```bash
 docker network create aistack-rag
 ( cd ragflow && docker compose up -d )            # RAGFlow
-docker compose --profile main-qwen up -d vllm-main   # Hauptmodell (Gemma: --profile main-gemma up -d vllm-main-gemma)
+docker compose --profile main-nemotron up -d vllm-main-nemotron   # Hauptmodell (bzw. --profile main-qwen up -d vllm-main)
 curl -s http://localhost:5568/v1/models | python -m json.tool
 docker compose up -d vllm-helper embeddings qdrant searxng presidio-proxy
 docker compose up -d code-sandbox agent open-webui
@@ -306,7 +263,7 @@ Logging ganz aus: `LOGGING_STACK=0 ./start.sh`.
 
 ## 6. Open WebUI konfigurieren (http://localhost:3009)
 
-1. **Modelle** erscheinen automatisch: `main` (= aktives Hauptmodell, Qwen *oder* Gemma),
+1. **Modelle** erscheinen automatisch: `main` (= aktives Hauptmodell),
    `qwen-helper`, `research-agent`.
 2. **Task-Model** (Titel/Tags): *Admin → Settings → Interface* → **`qwen-helper`**.
 3. **Code-Interpreter:** *Admin → Settings → Code Execution* → Engine **Jupyter**,
@@ -462,7 +419,7 @@ Drei Wege, das bei Bedarf nachzurüsten:
 | Komponente | VRAM ca. |
 |---|---|
 | vllm-main (Qwen 35B-A3B NVFP4, 26k, util 0.35, **Vision an** + MTP-Draft) | ~30–34 GB |
-| *— ODER —* vllm-main-gemma (Gemma 26B-A4B NVFP4, **256k**, util 0.35, max-num-seqs 2) | ~30–34 GB |
+| *— ODER —* vllm-main-nemotron (Nemotron 30B-A3B NVFP4 + DSpark, **260k**, util 0.40, max-num-seqs 2) | ~34–38 GB |
 | vllm-helper (4B, 32k, util 0.15) | ~10–12 GB |
 | embeddings (bge-m3, Mem0) | ~2–3 GB |
 | vllm-embed (Qwen3-Embedding-8B, FP8, util-Deckel 0.25, RAGFlow) | ~10–13 GB real |
@@ -471,9 +428,9 @@ Drei Wege, das bei Bedarf nachzurüsten:
 > `--gpu-memory-utilization` ist nur eine **Obergrenze**, kein fixer Verbrauch — Embedding-
 > Modelle füllen sie (kein KV-Cache) nicht aus. Realen Wert mit `nvidia-smi` prüfen.
 
-> **Qwen und Gemma schließen sich aus** (Profil-Umschaltung `main-qwen`/`main-gemma`) →
+> **Die Hauptmodelle schließen sich aus** (Profil-Umschaltung) →
 > es liegt **nie mehr als ein** Hauptmodell im VRAM. `util 0.35` deckelt die
-> Reservierung; da Gemma kleiner als Qwen ist, kannst du auf `0.30` senken.
+> Reservierung; der Startlog zeigt die tatsächliche KV-Cache-Größe.
 
 Hinweise zum Hauptmodell: der **Vision-Encoder** ist geladen (Bildverstehen) und
 kostet etwas extra; die **MTP-Spekulation** (`--speculative-config`) hält ein
@@ -506,19 +463,18 @@ Konflikt; daher bleibt RAGFlow standardmäßig auf CPU.
 
 ## 12. [VERIFY] — vor Produktivbetrieb prüfen
 
-- **HF-Repo** des Hauptmodells (`nvidia/Qwen3.5-35B-A3B-NVFP4` aktuell?).
+- **HF-Repo** des Hauptmodells (Repo-Namen bei Modellwechsel prüfen).
 - **`--quantization modelopt`**: falls vLLM meckert, `modelopt_fp4` probieren.
 - **`--speculative-config` (MTP)**: nur wenn die NVFP4-Checkpoints die
   MTP-Module enthalten — sonst beim Laden Fehler → Flag entfernen.
-- **Gemma-Diffusion** (`COMPOSE_PROFILES=main-gemma`): HF-Repo
-  `nvidia/diffusiongemma-26B-A4B-IT-NVFP4`, die Parser `gemma4`
-  (`--tool-call-parser`/`--reasoning-parser`) und `VLLM_USE_V2_MODEL_RUNNER=1`
-  gegen Model-Card + dein vLLM-Nightly prüfen. Attention via Env
-  `VLLM_ATTENTION_BACKEND=TRITON_ATTN` (manche Builds: CLI `--attention-backend
-  TRITON_ATTN`). NVFP4 ggf. `--quantization modelopt`. Diffusionsmodelle nutzen den
-  KV-Cache anders → die **autoregressiven** Sparflags (fp8-KV, chunked-prefill, MTP)
-  bewusst **NICHT** übernommen; nur falls FP4-MoE unterstützt:
-  `VLLM_USE_FLASHINFER_MOE_FP4=1`.
+- **Nemotron 3.5 Lightning** (`COMPOSE_PROFILES=main-nemotron`): Flags stammen aus der
+  offiziellen vLLM-Recipe (`vllm-project/recipes`, Variante NVFP4) — bei einem vLLM- oder
+  Modell-Update dort gegenprüfen. Der `--tool-call-parser` ist **`qwen3_coder`** laut
+  NVIDIA-Modellkarte (die Recipe nennt abweichend `qwen3_xml`). Als **verifizierte**
+  Hardware nennt die Recipe H100 / DGX Spark / DGX Station — RTX PRO 6000 (SM120) ist
+  dort **nicht** gelistet; `--moe-backend marlin` ist auf SM120 aber genau der
+  funktionierende Pfad. Bei degeneriertem Output (der Sanity-Check meldet es):
+  `VLLM_USE_DEEP_GEMM=0` im Service aktivieren.
 - **Vision**: KEIN `--language-model-only` (Vision-Encoder bleibt geladen).
   Falls du Bilder bewusst sperren willst: `--limit-mm-per-prompt '{"image":0}'`.
 - **`--safetensors-load-strategy prefetch`**: existiert ab neueren vLLM-Builds
@@ -551,8 +507,8 @@ Konflikt; daher bleibt RAGFlow standardmäßig auf CPU.
 docker compose -f docker-compose.yml -f docker-compose.upgrades.yml --profile morphik up -d
 docker compose ps               # Status Kernstack
 docker compose logs -f vllm-main          # Qwen-Hauptmodell (COMPOSE_PROFILES=main-qwen)
-docker compose logs -f vllm-main-gemma    # Gemma-Hauptmodell (COMPOSE_PROFILES=main-gemma)
-# Hauptmodell umschalten: in .env COMPOSE_PROFILES=main-qwen|main-gemma setzen -> ./start.sh
+docker compose logs -f vllm-main-nemotron # Nemotron-Hauptmodell (COMPOSE_PROFILES=main-nemotron)
+# Hauptmodell umschalten: in .env COMPOSE_PROFILES=main-nemotron|main-qwen|main-qwen-plain -> ./start.sh
 docker compose up -d agent      # Agent neu (z.B. nach AGENT_IMPL- oder RAGFLOW_API_KEY-Änderung)
 ( cd ragflow && docker compose logs -f ragflow-cpu )
 ./stop.sh                       # alles stoppen (Volumes bleiben)

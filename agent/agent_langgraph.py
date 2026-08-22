@@ -39,7 +39,7 @@ MAX_ITER = int(os.environ.get("VERIFY_MAX_ITER", "3"))
 VERIFY_MAX_QUERIES = int(os.environ.get("VERIFY_MAX_QUERIES", "3"))
 
 # Diese Variante orchestriert Retrieval/Web/Code SELBST -> das Modell darf KEINE
-# Tools aufrufen (sonst leakt z.B. gemma tool_call-Syntax in die Antwort). Eigener
+# Tools aufrufen (sonst leakt tool_call-Syntax in die sichtbare Antwort). Eigener
 # System-Prompt OHNE Tool-Aufruf-Framing (der geteilte C.SYSTEM_PROMPT ist
 # tool-zentriert und nur fuer die pydantic-Variante gedacht).
 _SYS_ORCHESTRATED = (
@@ -54,7 +54,7 @@ _SYS_ORCHESTRATED = (
 )
 
 # Schutznetz: falls das Modell doch tool_call-Syntax emittiert, aus der sichtbaren
-# Antwort entfernen (beobachtet bei gemma: '<|tool_call>call:...(...)<tool_call|>').
+# Antwort entfernen (Form: '<|tool_call>call:...(...)<tool_call|>').
 _TOOLCALL_RE = re.compile(r"<\|?\s*tool_call\s*\|?>.*?<\|?\s*/?\s*tool_call\s*\|?>",
                           re.DOTALL | re.IGNORECASE)
 

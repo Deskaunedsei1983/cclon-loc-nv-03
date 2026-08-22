@@ -38,7 +38,6 @@ Ein **komplett selbst-enthaltenes**, lokales AI-Bundle nahe an claude.ai
 | `vllm-main-nemotron` | vllm-openai | 5568 | `main-nemotron` | **Haupt-LLM (empfohlen)** Nemotron-3.5-Lightning-30B-A3B-NVFP4 **+ DSpark** |
 | `vllm-main` | vllm-openai | 5568 | `main-qwen` | Haupt-LLM Qwen3.6-35B-A3B-NVFP4 **+ MTP** |
 | `vllm-main-qwen-plain` | vllm-openai | 5568 | `main-qwen-plain` | dasselbe **ohne** MTP (sauberes Structured Output) |
-| `vllm-main-gemma` | vllm-openai | 5568 | `main-gemma` | DiffusionGemma-26B-A4B-IT-NVFP4 |
 | `vllm-helper` | vllm-openai | 30001 | `helper` | kleines Task-LLM Qwen3.5-4B (**optional**) |
 | `mem0-struct` | llama.cpp:server | 8088 | `mem0struct` | **CPU** JSON-/Task-Helfer (Qwen2.5-3B-Instruct GGUF) |
 | `embeddings` | text-embeddings-inference | 8082 | — | TEI **bge-m3** (1024 Dim) → **nur Mem0** |
@@ -72,7 +71,6 @@ Alle drei hängen am **Alias `vllm-main:5568`** und liefern die ID **`main`**.
 | `main-nemotron` | Nemotron-3.5-Lightning-30B-A3B-NVFP4 | hybrides **Mamba-MoE** (30B/3B aktiv), **DSpark**-Speculative-Decoding (3 Tokens, eigener Draft-Checkpoint), `--moe-backend marlin`, `--mamba-backend flashinfer`, `--reasoning-parser nemotron_v3`, Tools `qwen3_xml`, 260k (Modell kann 1M), KV fp8_e4m3 | **Default** — braucht vLLM ≥ 0.27.1 |
 | `main-qwen` | Qwen3.6-35B-A3B-NVFP4 | **MTP** Speculative Decoding, `--reasoning-parser qwen3`, Tools `qwen3_coder`, 256k, KV fp8 | schnellstes Chat |
 | `main-qwen-plain` | dito | **ohne** MTP | **sauberes Structured Output** (mem0 `infer=true`) — MTP × guided decoding erzeugt sonst kaputtes JSON |
-| `main-gemma` | DiffusionGemma-26B-A4B-IT-NVFP4 | `VLLM_USE_V2_MODEL_RUNNER=1`, `--attention-backend TRITON_ATTN`, gemma4-Parser, `--default-chat-template-kwargs enable_thinking=true`, 256k | Diffusions-LLM, multimodal; **kein** garantiertes Structured Output |
 
 ### 4.2 GPU-Helfer (`helper`, optional)
 `vllm-helper` (Qwen3.5-4B, `:30001`, ID `qwen-helper`). Klein. Im Default **aus**
@@ -99,14 +97,14 @@ ungeeignet — bei aktivem Thinking greift die JSON-Grammatik nicht (llama.cpp #
   Embedder **bge-m3**. Der Agent sucht zu Beginn relevante Erinnerungen und schreibt
   am Ende neue.
 - **Adaptiver LLM-Selektor** (`_pick_mem0_llm`, `MEM0_LLM_BASE_URL=auto`):
-  `mem0-struct (CPU)` → `vllm-helper` → **autoregressives** Hauptmodell (Gemma-Diffusion
+  `mem0-struct (CPU)` → `vllm-helper` → aktives Hauptmodell (Modelle ohne garantiertes JSON
   wird an den served-model-names erkannt und **übersprungen**) → sonst **leise aus**.
 - **`MEM0_INFER`** (Default **false**):
   - `false` = **robustes Direkt-Speichern** der User-Aussagen (kein zweiter LLM-Call;
     deterministisch). mem0s zweistufiger „Memory-Manager" ist mit kleinen lokalen
     Modellen fragil (leeres JSON → `Expecting value`).
   - `true` = destillierte Fakten — **braucht** ein zuverlässiges JSON-LLM (z. B.
-    `main-qwen-plain`, **nicht** das MTP-Qwen, **nicht** Gemma).
+    `main-qwen-plain`, **nicht** das MTP-Qwen).
 - **`MEM0_ENABLED`** schaltet Memory hart ab.
 
 ---
@@ -213,7 +211,7 @@ Dashboard „AI-Stack — Container-Logs & Fehler" zeigt u. a. den Websuche-Pfad
 
 | `COMPOSE_PROFILES`-Wert | startet |
 |---|---|
-| `main-nemotron` / `main-qwen` / `main-qwen-plain` / `main-gemma` | das jeweilige Hauptmodell (genau eines) |
+| `main-nemotron` / `main-qwen` / `main-qwen-plain` | das jeweilige Hauptmodell (genau eines) |
 | `helper` | GPU-Task-Helfer (optional) |
 | `mem0struct` | CPU-Struct-Helfer (mem0 + OWUI-Tasks) — **empfohlen** |
 | `blocklist` | Auto-Blocklist-Sidecar |

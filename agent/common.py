@@ -45,12 +45,8 @@ LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://vllm-main:5568/v1")
 LLM_MODEL = os.environ.get("LLM_MODEL", "main")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "not-needed")
 
-# Mem0-Faktenextraktion braucht STRUKTURIERTE Ausgaben (JSON). DiffusionGemma
-# (main-gemma) unterstuetzt KEINE structured outputs -> 400 ValueError. Darum
-# laeuft mem0 per Default auf dem autoregressiven Helfer (qwen-helper); per ENV
-# umstellbar (z.B. auf main, wenn das Hauptmodell autoregressiv ist).
-# mem0 braucht JSON/structured outputs. 'auto' (Default): Helfer bevorzugt, sonst
-# autoregressives Hauptmodell (Gemma-Diffusion wird uebersprungen), sonst aus.
+# Mem0-Faktenextraktion braucht STRUKTURIERTE Ausgaben (JSON).
+# 'auto' (Default): CPU-Struct-Sidecar bevorzugt, dann GPU-Helfer, dann Hauptmodell.
 # Feste Wahl moeglich: MEM0_LLM_BASE_URL=http://vllm-helper:30001/v1 + MEM0_LLM_MODEL.
 MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", "auto")
 MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "qwen-helper")
@@ -291,8 +287,7 @@ def _models_list(base_url: str):
 def _pick_mem0_llm():
     """(base_url, model) fuer mem0 ODER None. mem0 braucht JSON/structured outputs.
     'auto'-Reihenfolge: CPU-Struct-Sidecar (garantiertes JSON, ~0 VRAM) -> GPU-Helfer
-    -> aktives autoregressives Hauptmodell (Gemma-Diffusion kann kein JSON, an den
-    served-model-names erkannt -> uebersprungen) -> None. Explizite Wahl hat Vorrang."""
+    -> aktives Hauptmodell -> None. Explizite Wahl hat Vorrang."""
     if MEM0_LLM_BASE_URL and MEM0_LLM_BASE_URL.lower() != "auto":
         return MEM0_LLM_BASE_URL, MEM0_LLM_MODEL
     if MEM0_STRUCT_URL and _models_list(MEM0_STRUCT_URL) is not None:
@@ -300,9 +295,8 @@ def _pick_mem0_llm():
     helper = "http://vllm-helper:30001/v1"
     if _models_list(helper) is not None:
         return helper, "qwen-helper"
-    ids = _models_list(LLM_BASE_URL)
-    if ids is not None and not any("gemma" in i.lower() for i in ids):
-        return LLM_BASE_URL, LLM_MODEL  # autoregressives Hauptmodell ("main")
+    if _models_list(LLM_BASE_URL) is not None:
+        return LLM_BASE_URL, LLM_MODEL  # aktives Hauptmodell ("main")
     return None
 
 

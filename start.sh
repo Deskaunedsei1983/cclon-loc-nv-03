@@ -80,26 +80,24 @@ if [ "$LOGGING_STACK" = "1" ]; then
 fi
 
 # --- Hauptmodell-Profil robust aus .env (COMPOSE_PROFILES) bestimmen --------
-#  Genau EIN Hauptmodell (main-qwen|main-gemma). Wird IMMER explizit per
+#  Genau EIN Hauptmodell (main-nemotron|main-qwen|main-qwen-plain). Wird IMMER explizit per
 #  --profile uebergeben -> egal ob die Compose-Version COMPOSE_PROFILES und
 #  --profile vereinigt oder ueberschreibt, das Hauptmodell startet zuverlaessig.
 ENV_PROFILES=""
 [ -f .env ] && ENV_PROFILES="$(grep -E '^[[:space:]]*COMPOSE_PROFILES=' .env | tail -n1 | cut -d= -f2- | tr -d "\"' ")"
-has_qwen=0; has_qwen_plain=0; has_gemma=0; has_nemotron=0
+has_qwen=0; has_qwen_plain=0; has_nemotron=0
 case ",$ENV_PROFILES," in *,main-qwen,*)       has_qwen=1       ;; esac
 case ",$ENV_PROFILES," in *,main-qwen-plain,*) has_qwen_plain=1 ;; esac
-case ",$ENV_PROFILES," in *,main-gemma,*)      has_gemma=1      ;; esac
 case ",$ENV_PROFILES," in *,main-nemotron,*)   has_nemotron=1   ;; esac
-if [ $((has_qwen + has_qwen_plain + has_gemma + has_nemotron)) -gt 1 ]; then
+if [ $((has_qwen + has_qwen_plain + has_nemotron)) -gt 1 ]; then
   echo "FEHLER: Mehr als EIN Hauptmodell in COMPOSE_PROFILES (main-nemotron |"
-  echo "        main-qwen | main-qwen-plain | main-gemma). Genau EINES waehlen. Abbruch."
+  echo "        main-qwen | main-qwen-plain). Genau EINES waehlen. Abbruch."
   exit 1
 fi
 MAIN_PROFILE="main-qwen"
 [ "$has_qwen_plain" = 1 ] && MAIN_PROFILE="main-qwen-plain"
-[ "$has_gemma" = 1 ] && MAIN_PROFILE="main-gemma"
 [ "$has_nemotron" = 1 ] && MAIN_PROFILE="main-nemotron"
-[ $((has_qwen + has_qwen_plain + has_gemma + has_nemotron)) -eq 0 ] && \
+[ $((has_qwen + has_qwen_plain + has_nemotron)) -eq 0 ] && \
   echo "   ! Kein Hauptmodell in .env (COMPOSE_PROFILES) -> Default: main-qwen"
 echo "   + Hauptmodell-Profil: $MAIN_PROFILE"
 MAIN_PROFILE_ARGS=(--profile "$MAIN_PROFILE")
@@ -159,7 +157,7 @@ import json, re, sys, urllib.request
 URL = "http://localhost:5568/v1/chat/completions"
 payload = {"model": "main",
            "messages": [{"role": "user",
-                         "content": "Antworte mit genau diesem Satz: Hallo Welt, hier ist Qwen."}],
+                         "content": "Antworte mit genau diesem Satz: Hallo Welt, der Stack laeuft."}],
            "max_tokens": 40, "temperature": 0,
            "chat_template_kwargs": {"enable_thinking": False}}
 req = urllib.request.Request(URL, data=json.dumps(payload).encode(),
@@ -206,7 +204,6 @@ if [ "$SERIAL_GPU_LOAD" = "1" ]; then
   echo ">> Serielles GPU-Laden AN (kein gestapelter Lade-Peak). Aus: SERIAL_GPU_LOAD=0 ./start.sh"
   MAIN_SVC="vllm-main"
   [ "$has_qwen_plain" = 1 ] && MAIN_SVC="vllm-main-qwen-plain"
-  [ "$has_gemma" = 1 ] && MAIN_SVC="vllm-main-gemma"
   [ "$has_nemotron" = 1 ] && MAIN_SVC="vllm-main-nemotron"
   echo ">> [seriell 1/4] Hauptmodell ($MAIN_SVC)"
   retry 3 dc up -d --no-deps "$MAIN_SVC";  wait_health "http://localhost:5568/health" "vLLM main" 30

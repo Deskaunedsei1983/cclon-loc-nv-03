@@ -1,7 +1,7 @@
-# Open WebUI — System-Prompt für das Haupt-Modell (`main` / gemma-main)
+# Open WebUI — System-Prompt für das Haupt-Modell (`main`)
 
 > Versioniert, damit er nicht verloren geht. **Anwenden in OWUI:**
-> Workspace → Models → `main` (bzw. `gemma-main`) → *System Prompt* → Inhalt unten einfügen.
+> Workspace → Models → `main` → *System Prompt* → Inhalt unten einfügen.
 > (OWUI speichert das pro Modell in seiner DB; diese Datei ist die Quelle der Wahrheit.)
 
 ---

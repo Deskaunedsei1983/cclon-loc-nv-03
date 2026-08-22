@@ -116,7 +116,7 @@ Isolierung: Profil `microvm` (microVM-Executor).
 
 **Ergebnis:** personalisierte Antworten; `Memories`-Count in Qdrant steigt.
 
-**Stolpersteine:** `infer=true` mit **MTP-Qwen** oder **Gemma** liefert kaputtes/leeres
+**Stolpersteine:** `infer=true` mit **MTP-Qwen** liefert kaputtes/leeres
 JSON → bei `infer=false` bleiben **oder** `main-qwen-plain` nutzen (UC-6).
 
 ---
@@ -127,16 +127,16 @@ JSON → bei `infer=false` bleiben **oder** `main-qwen-plain` nutzen (UC-6).
 
 **Hebel:**
 1. **Hauptmodell** (`COMPOSE_PROFILES`, genau eines):
-   - `main-qwen` — schnellstes Chat (MTP).
+   - `main-nemotron` — **Default**: Mamba-MoE + DSpark-Speculative-Decoding, 260k.
+   - `main-qwen` — Chat mit MTP.
    - `main-qwen-plain` — ohne MTP → **sauberes JSON** für `mem0 infer=true`.
-   - `main-gemma` — Diffusion, multimodal.
 2. **GPU-Helfer** weglassen (kein `helper` im Profil) → spart VRAM. mem0/Tasks laufen
    auf dem **CPU**-Helfer.
 3. **Embedder** verschlanken: `EMBED_MODEL=Qwen/Qwen3-Embedding-4B` (`0.15` GPU-Util).
 
 **Ablauf (Beispiel „maximal schlank"):**
 ```ini
-COMPOSE_PROFILES=main-qwen,mem0struct      # kein helper
+COMPOSE_PROFILES=main-nemotron,mem0struct  # kein helper
 MEM0_INFER=false
 EMBED_MODEL=Qwen/Qwen3-Embedding-4B
 ```
@@ -145,7 +145,7 @@ EMBED_MODEL=Qwen/Qwen3-Embedding-4B
 **Ergebnis:** ein Hauptmodell + CPU-Helfer (~0 VRAM) + schlanker Embedder; mem0 stabil.
 
 **Stolpersteine:** Profil wechseln entfernt den alten Container nicht automatisch →
-`docker rm -f vllm_main vllm_main_gemma` vor dem Neustart (Port 5568/VRAM).
+`docker rm -f vllm_main vllm_main_qwen_plain vllm_main_nemotron` vor dem Neustart (Port 5568/VRAM).
 
 ---
 

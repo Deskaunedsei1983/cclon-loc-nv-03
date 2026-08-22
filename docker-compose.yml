@@ -26,7 +26,7 @@
 
 services:
   # ===================== 1a) HAUPT-LLM A: QWEN  (NVFP4, SM120) ==============
-  #  Umschaltbar gegen Gemma-Diffusion (1b) — es laeuft IMMER nur EINES davon.
+  #  Eine von mehreren Hauptmodell-Varianten — es laeuft IMMER nur EINE davon.
   #  Auswahl in der .env:  COMPOSE_PROFILES=main-qwen   (Standard)
   #  Erreichbar bleibt es – wie gehabt – unter Hostname "vllm-main:5568",
   #  Modell-ID "main" (zusaetzlich weiter als "qwen-main").
@@ -149,7 +149,9 @@ services:
   #                  --enable-prefix-caching --max-num-batched-tokens 16384
   #    NVFP4       : --kv-cache-dtype fp8 (= fp8_e4m3) --moe-backend marlin
   #    reasoning   : --reasoning-parser nemotron_v3
-  #    tool calling: --enable-auto-tool-choice --tool-call-parser qwen3_xml
+  #    tool calling: --enable-auto-tool-choice --tool-call-parser qwen3_coder
+  #                  (HERSTELLERKARTE auf HF nennt qwen3_coder; die vLLM-Recipe
+  #                   nennt qwen3_xml — wir folgen NVIDIA als Modell-Herausgeber.)
   #    DSpark      : --speculative-config {"method":"dspark", ...DSpark, 3 Tokens}
   #  Die Recipe verlangt vLLM >= 0.27.1 -> VLLM_IMAGE in der .env entsprechend setzen.
   #  Kein --trust-remote-code noetig (native Unterstuetzung ab 0.27.1) -> laesst den
@@ -197,72 +199,8 @@ services:
       --gpu-memory-utilization ${NEMOTRON_GPU_UTIL:-0.40}
       --reasoning-parser nemotron_v3
       --enable-auto-tool-choice
-      --tool-call-parser qwen3_xml
+      --tool-call-parser qwen3_coder
       --speculative-config '{"method":"dspark","model":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark","num_speculative_tokens":${NEMOTRON_SPEC_TOKENS:-3}}'
-    networks:
-      aistack-core:
-        aliases:
-          - vllm-main
-
-  # ===================== 1b) HAUPT-LLM B: GEMMA-DIFFUSION (NVFP4, SM120) ====
-  #  ALTERNATIVE zu (1a). Auswahl in der .env:  COMPOSE_PROFILES=main-gemma
-  #  Diffusions-LLM (nicht-autoregressiv) -> bewusst NUR die vom Modell
-  #  benoetigten Flags + die fuer 256k-Kontext / VRAM-Sparsamkeit noetigen.
-  #  Per Netzwerk-Alias unter demselben Hostnamen "vllm-main:5568" erreichbar,
-  #  served-model-name "main" -> Agent/OWUI/RAGFlow brauchen KEINE Aenderung.
-  vllm-main-gemma:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:nightly} # Tag via .env -> VLLM_IMAGE (gepinnt, >= dev332, Diffusion + gemma4)
-    container_name: vllm_main_gemma
-    profiles: ["main-gemma"]
-    restart: unless-stopped
-    ipc: host
-    shm_size: "16gb"
-    ulimits:
-      memlock: -1
-      stack: 67108864
-    ports:
-      - "5568:5568"
-    volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface
-    environment:
-      - HF_TOKEN=${HF_TOKEN:-}
-      - VLLM_USE_V2_MODEL_RUNNER=1 # Model-Card: erforderlich (Diffusions-Modell-Runner)
-      # Attention kommt als CLI-Flag (--attention-backend TRITON_ATTN), exakt wie im Card.
-      # - HF_HUB_OFFLINE=1                   # nach erstem Download aktivieren
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    # Flags 1:1 aus dem offiziellen NVIDIA-Modellcard (DiffusionGemma-26B-A4B-IT-NVFP4,
-    # Abschnitt "Usage"): VLLM_USE_V2_MODEL_RUNNER=1 (Env), --attention-backend TRITON_ATTN,
-    # gemma4 reasoning-/tool-call-parser, --override-generation-config max_new_tokens=null
-    # (Diffusions-Sampling stoppt adaptiv, nicht per starrem Limit) und
-    # --default-chat-template-kwargs enable_thinking=true (Reasoning-Modus an).
-    # Alle Flags gegen Commit ecf9d83 verifiziert: --default-chat-template-kwargs/
-    # --tool-call-parser/--enable-auto-tool-choice in entrypoints/openai/cli_args.py,
-    # --attention-backend/--reasoning-parser/--override-generation-config in arg_utils.py.
-    # Eigene VRAM-Drosselung (NICHT im Card): --max-num-seqs 2 (Card nennt 4),
-    # --gpu-memory-utilization 0.35 (bei Bedarf 0.30), --max-model-len 262144 (256k).
-    # Card-Hinweis: bevorzugtes Image ist vllm/vllm-openai:gemma; dein Nightly ecf9d83
-    # laedt das Modell aber bereits (Engine-Log: quantization=modelopt_fp4, gemma4 ok).
-    command: >
-      nvidia/diffusiongemma-26B-A4B-IT-NVFP4
-      --served-model-name gemma-main main
-      --host 0.0.0.0
-      --port 5568
-      --trust-remote-code
-      --attention-backend TRITON_ATTN
-      --max-model-len 262144
-      --max-num-seqs 2
-      --gpu-memory-utilization 0.35
-      --enable-auto-tool-choice
-      --tool-call-parser gemma4
-      --reasoning-parser gemma4
-      --override-generation-config '{"max_new_tokens":null}'
-      --default-chat-template-kwargs '{"enable_thinking":true}'
     networks:
       aistack-core:
         aliases:
@@ -314,7 +252,7 @@ services:
     networks:
       - aistack-core
     # Kein depends_on auf das Hauptmodell mehr: es ist jetzt profil-gegated
-    # (main-qwen|main-gemma) und wird per Netzwerk-Alias "vllm-main" erreicht.
+    # (main-nemotron|main-qwen|main-qwen-plain) und wird per Alias "vllm-main" erreicht.
 
   # ===== Mem0 Structured-Output-Helfer (CPU, llama.cpp) — OPTIONAL ==========
   #  Liefert mem0 GARANTIERT valides JSON (GBNF aus response_format) auf der CPU
@@ -542,7 +480,7 @@ services:
       - LOG_LEVEL=${AGENT_LOG_LEVEL:-DEBUG}
       # LLM
       - LLM_BASE_URL=http://vllm-main:5568/v1
-      - LLM_MODEL=main # stabil: zeigt immer auf das aktive Hauptmodell (Qwen ODER Gemma)
+      - LLM_MODEL=main # stabil: zeigt immer auf das aktive Hauptmodell
       - LLM_API_KEY=not-needed
       # Embeddings (Mem0)
       - EMBED_BASE_URL=http://embeddings:80/v1
@@ -719,7 +657,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       # EIN Nutzer-Modell: NUR der research-agent (komplette Kette) wird als
-      # OWUI-Chat-Modell exponiert. Das rohe Hauptmodell (main/gemma-main) wird
+      # OWUI-Chat-Modell exponiert. Das rohe Hauptmodell ("main") wird
       # NICHT mehr verbunden -> es verschwindet aus dem Auswahlmenue (der Agent
       # spricht vllm-main intern direkt an, OWUI braucht es dafuer nicht). Der
       # Hintergrund-Task-Modell (Titel/Tags/Suchqueries) ist der CPU-Struct-Helfer

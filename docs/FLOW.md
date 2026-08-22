@@ -18,7 +18,7 @@ fließt. Legende: `►` Aufruf/Datenfluss · `▣` Persistenz · `⟲` Schleife.
   ├─[3] Hauptmodell-Profil aus .env bestimmen   (genau EIN main-* ; sonst Abbruch)
   │
   └─[4] SERIELLES GPU-Laden (SERIAL_GPU_LOAD=1)  — jeweils warten auf /health:
-        vllm-main(-qwen|-plain|-gemma)  ►/health
+        vllm-main(-nemotron|-qwen|-plain) ►/health
           └► embeddings (TEI bge-m3)    ►/health
                └► vllm-embed            ►/health
                     └► vllm-helper*      ►/health      (* nur wenn Profil 'helper')
@@ -106,7 +106,7 @@ mem_add(query, answer)
         Call 1 (Extrakt):   LLM ► {"facts":[…]}            (response_format json_object)
         Call 2 (Manager):   LLM ► {"memory":[…ADD/UPDATE…]}
           ► je Fakt:  bge-m3 ► Qdrant /upsert              ▣
-        (braucht zuverlässiges JSON-LLM, z. B. main-qwen-plain; Gemma/MTP-Qwen scheitern)
+        (braucht zuverlässiges JSON-LLM, z. B. main-qwen-plain; MTP-Qwen scheitert)
 ```
 
 ---
@@ -144,13 +144,13 @@ So bleibt **Egress auf einen Single-Purpose-Container beschränkt**, der nie Use
 ## 8. Modell-Auswahl-Flow (`COMPOSE_PROFILES`)
 
 ```
-.env  COMPOSE_PROFILES = main-qwen | main-qwen-plain | main-gemma   (+ helper/mem0struct/…)
+.env  COMPOSE_PROFILES = main-nemotron | main-qwen | main-qwen-plain  (+ helper/mem0struct/…)
   ► start.sh: genau EIN main-* (sonst Abbruch)
   ► der gewählte vLLM-Dienst bindet Port 5568 + Netz-Alias "vllm-main"
   ► Agent/OWUI/RAGFlow rufen unverändert  http://vllm-main:5568/v1 (Modell "main")
 ```
-Auswirkung auf mem0 (`MEM0_LLM_BASE_URL=auto`): bei `main-gemma` wird das Hauptmodell
-als JSON-untauglich erkannt und übersprungen → mem0 nimmt `mem0-struct`/`helper`.
+Auswirkung auf mem0 (`MEM0_LLM_BASE_URL=auto`): die Reihenfolge ist `mem0-struct` (CPU)
+→ `vllm-helper` → aktives Hauptmodell; das erste erreichbare gewinnt.
 
 ---
 
