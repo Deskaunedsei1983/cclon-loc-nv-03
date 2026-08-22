@@ -41,7 +41,13 @@ docker compose -f docker-compose.yml -f docker-compose.upgrades.yml -f docker-co
   "${PROFILE_ARGS[@]}" down "${EXTRA[@]}" 2>&1 || true
 
 echo ">> RAGFlow stoppen"
-( cd ragflow && docker compose down "${EXTRA[@]}" ) 2>&1 || true
+if [ -f ragflow/docker-compose.yml ]; then
+  # ohne ragflow/.env waere ${RAGFLOW_IMAGE} leer -> compose-Fehler; der Default in
+  # ragflow/docker-compose.yml faengt das ab, der Guard hier den fehlenden Ordner.
+  ( cd ragflow && docker compose down "${EXTRA[@]}" ) 2>&1 || true
+else
+  echo "   (kein ./ragflow -> uebersprungen)"
+fi
 
 echo ">> Abschluss-Pruefung: laeuft noch etwas vom Stack?"
 STACK_RE='vllm_|^agent$|code_sandbox|open-webui|searxng|presidio|qdrant|ingest_router|mem0-struct|browserless|morphik|grafana|loki|promtail|prometheus|dozzle|netdata|cadvisor|exporter|ragflow|es01|minio|redis|mysql|blocklist|fragments|microsandbox|ocu-'

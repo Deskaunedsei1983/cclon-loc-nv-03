@@ -8,7 +8,9 @@ services:
         condition: service_healthy
     profiles:
       - cpu
-    image: ${RAGFLOW_IMAGE}
+    # Default, falls ragflow/.env fehlt oder compose nicht aus ./ragflow heraus
+    # aufgerufen wird -> sonst: "has neither an image nor a build context".
+    image: ${RAGFLOW_IMAGE:-infiniflow/ragflow:v0.27.0}
     # Example configuration to set up an MCP server:
     # command:
     #   - --enable-mcpserver
@@ -58,7 +60,9 @@ services:
         condition: service_healthy
     profiles:
       - gpu
-    image: ${RAGFLOW_IMAGE}
+    # Default, falls ragflow/.env fehlt oder compose nicht aus ./ragflow heraus
+    # aufgerufen wird -> sonst: "has neither an image nor a build context".
+    image: ${RAGFLOW_IMAGE:-infiniflow/ragflow:v0.27.0}
     # Example configuration to set up an MCP server:
     # command:
     #   - --enable-mcpserver

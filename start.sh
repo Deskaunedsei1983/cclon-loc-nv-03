@@ -88,6 +88,13 @@ echo "   sudo sysctl -w vm.max_map_count=262144   (persistent: /etc/sysctl.d/)"
 
 echo ">> [2/3] RAGFlow starten (ES/MySQL/MinIO/Redis + ragflow-server)"
 chmod +x ./ragflow/entrypoint.sh 2>/dev/null || true   # +x kann beim Entpacken verloren gehen
+# ragflow/.env ist gitignored (enthaelt Passwoerter/Ports) -> nach einem frischen Klon
+# fehlt sie. Ohne sie ist ${RAGFLOW_IMAGE} leer und compose bricht ab mit
+# "service ragflow-cpu has neither an image nor a build context specified".
+if [ ! -f ragflow/.env ] && [ -f ragflow/.env-example ]; then
+  cp ragflow/.env-example ragflow/.env
+  echo "   + ragflow/.env aus .env-example angelegt (Passwoerter/Ports dort pruefen!)"
+fi
 retry 3 ragflow_up
 
 echo ">> [3/3] Kernstack starten"
