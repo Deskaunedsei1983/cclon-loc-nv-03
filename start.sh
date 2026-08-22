@@ -209,8 +209,12 @@ echo "     (OWUI nutzt fuer Chat-Uploads zusaetzlich sein eingebautes all-MiniLM
 _profile_ready() {  # _profile_ready <profil> -> 0 = startbereit
   case "$1" in
     fragments)
-      if [ -f fragments/app/package.json ]; then return 0; fi
-      echo "   ! Profil 'fragments' uebersprungen: fragments/app/package.json fehlt."
+      # Repo kann in ./fragments (direkt) ODER ./fragments/app (README-Weg) liegen.
+      if   [ -f fragments/package.json ];     then export FRAGMENTS_CONTEXT=./fragments;     return 0
+      elif [ -f fragments/app/package.json ]; then export FRAGMENTS_CONTEXT=./fragments/app; return 0
+      fi
+      echo "   ! Profil 'fragments' uebersprungen: keine package.json in ./fragments"
+      echo "     oder ./fragments/app gefunden (E2B-Repo nicht geklont)."
       echo "     Einrichten:  cd fragments && git clone https://github.com/e2b-dev/fragments app"
       echo "                  cp Dockerfile app/Dockerfile   (siehe fragments/README.md)"
       return 1 ;;
@@ -227,6 +231,50 @@ done
 PROFILE_ARGS=()
 for p in "${_KEPT[@]:-}"; do [ -n "$p" ] && PROFILE_ARGS+=(--profile "$p"); done
 SEEN="$_KEPT_SEEN"
+
+# --- Namenskonflikte aufloesen (feste container_name) -----------------------
+#  Alle Dienste haben ein festes 'container_name'. Existiert ein Container mit
+#  demselben Namen aus einem ANDEREN (alten) Compose-Projekt, verweigert Docker das
+#  Anlegen ("Conflict. The container name ... is already in use") — und 'compose up'
+#  bricht komplett ab, d.h. auch der Kernstack startet nicht.
+#  Verhalten hier bewusst konservativ:
+#    - GESTOPPTE Fremd-/Altcontainer werden entfernt (risikoarm: Volumes bleiben!)
+#    - LAUFENDE Container eines fremden Projekts werden NICHT angefasst, sondern
+#      gemeldet — sonst wuerde dieses Skript einen anderen Stack abschiessen.
+_project_name() {
+  if [ -f .env ] && grep -qE '^[[:space:]]*COMPOSE_PROJECT_NAME=' .env; then
+    grep -E '^[[:space:]]*COMPOSE_PROJECT_NAME=' .env | tail -n1 | cut -d= -f2- | tr -d "\"' "
+  else
+    basename "$PWD" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-'
+  fi
+}
+
+clear_name_conflicts() {
+  local proj cn lbl state removed=0 blocked=0
+  proj="$(_project_name)"
+  for cn in $(grep -hE '^[[:space:]]*container_name:' docker-compose.yml \
+                 docker-compose.observability.yml docker-compose.upgrades.yml 2>/dev/null \
+              | awk '{print $2}' | tr -d '"' | sort -u); do
+    docker inspect "$cn" >/dev/null 2>&1 || continue          # existiert nicht -> ok
+    lbl="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$cn" 2>/dev/null)"
+    [ "$lbl" = "$proj" ] && continue                          # gehoert uns -> compose managed ihn
+    state="$(docker inspect -f '{{.State.Status}}' "$cn" 2>/dev/null)"
+    if [ "$state" = "running" ]; then
+      echo "   ! Name '$cn' ist von einem LAUFENDEN Container des Projekts"
+      echo "     '${lbl:-<ohne compose-Projekt>}' belegt -> wird NICHT automatisch entfernt."
+      echo "     Wenn er weg darf:  docker rm -f $cn"
+      blocked=$((blocked+1))
+    else
+      echo "   + entferne verwaisten Container '$cn' (Projekt '${lbl:-keins}', Status $state)"
+      docker rm -f "$cn" >/dev/null 2>&1 && removed=$((removed+1))
+    fi
+  done
+  [ "$removed" -gt 0 ] && echo "   -> $removed verwaiste Container entfernt (Volumes/Daten unberuehrt)"
+  [ "$blocked" -gt 0 ] && echo "   -> $blocked Namenskonflikt(e) offen: der Start wird daran scheitern!"
+  return 0
+}
+echo ">> Namenskonflikte pruefen (verwaiste Container aus fruehereren Laeufen)"
+clear_name_conflicts
 
 dc() { docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" "$@"; }
 main_up() { dc up -d --build; }
