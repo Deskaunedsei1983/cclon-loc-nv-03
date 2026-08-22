@@ -104,7 +104,8 @@ Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/v
 | Code-Ausführung/-Korrektur | OWUI Code-Interpreter → Jupyter-Sandbox (iteriert bei Fehlern); Agent → **Microsandbox-microVM** (hardware-isoliert) |
 | Skills / Office-Dateien | System-Prompt + Sandbox mit python-docx/openpyxl/python-pptx/reportlab |
 | Jupyter-Notebooks | nbformat in der Sandbox |
-| Dateien lesen/verarbeiten | OWUI-Upload → Sandbox-Workdir |
+| Dateien lesen/verarbeiten | OWUI-Upload → Volltext-Modus + Sandbox-Workdir |
+| **Erzeugte Dateien herunterladen** | OWUI-Filter `sandbox_files.py`: Notebooks/CSV/XLSX/PDF aus der Sandbox erscheinen als **Download-Kacheln** in der Antwort |
 | Doku-Wissen (RAG) | **RAGFlow** (eingebettet) · optional Morphik (multimodal) |
 | Memory über Sitzungen | Mem0 + Qdrant |
 | Agentische RAG/Critic-Pipeline | research-agent (Whitelist-Tools, optional Critic-Loop) |

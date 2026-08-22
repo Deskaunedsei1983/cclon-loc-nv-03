@@ -82,6 +82,7 @@ def _result_text(result) -> str:
 async def run_agent(messages: list[dict], user_id: str = "owui",
                     request_body: dict | None = None) -> str:
     query = C.extract_query(messages)
+    C.reset_run_files()   # Sandbox-Dateien pro Anfrage frisch sammeln
     C.schedule_ingest(request_body or {})  # Chat-Upload lokal nach RAGFlow/Morphik (nicht-blockierend)
     parts = [C.mem_search(_memory, query, user_id)]
     fulltext = only_doc = None
@@ -111,4 +112,5 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
         result = await _agent.run(prompt, deps=Deps(http=http, fulltext=fulltext, only_doc=only_doc))
     answer = _result_text(result)
     C.mem_add(_memory, query, answer, user_id)
-    return answer
+    # Sandbox-Dateien anhaengen (siehe agent_langgraph) — nach mem_add.
+    return answer + C.run_files_block()

@@ -939,6 +939,49 @@ async def _post_run(http: httpx.AsyncClient, url: str, code: str, files: dict | 
 _TEXT_OUT = (".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log",
              ".py", ".xml", ".html", ".ini")
 
+# --- In der Sandbox ERZEUGTE Dateien an OWUI durchreichen --------------------
+# Der OpenAI-Chat-API fehlt ein Feld fuer Datei-Anhaenge in der ANTWORT. Wir haengen
+# die Dateien darum als HTML-Kommentar an (im Markdown unsichtbar); der OWUI-Filter
+# 'sandbox_files.py' schneidet den Block heraus, legt die Dateien als echte
+# OWUI-Files ab und haengt sie als klickbare Download-Chips an die Nachricht.
+# Ohne den Filter bleibt der Block schlicht unsichtbar -> nichts geht kaputt.
+FILES_MARK_BEGIN = "<!--OWUI_FILES"
+FILES_MARK_END = "OWUI_FILES-->"
+# Wie gross darf eine einzelne durchgereichte Datei sein (base64 blaeht ~+33%)?
+SANDBOX_FILE_MAX = int(os.environ.get("SANDBOX_FILE_MAX", str(20 * 1024 * 1024)))
+# Erzeugte Dateien des laufenden Requests (Name -> (content_type, b64)).
+_RUN_FILES: "dict[str, tuple[str, str]]" = {}
+
+_CTYPE = {
+    ".ipynb": "application/x-ipynb+json", ".json": "application/json",
+    ".csv": "text/csv", ".tsv": "text/tab-separated-values", ".txt": "text/plain",
+    ".md": "text/markdown", ".html": "text/html", ".py": "text/x-python",
+    ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".zip": "application/zip",
+}
+
+
+def _guess_ctype(name: str) -> str:
+    ext = os.path.splitext(name or "")[1].lower()
+    return _CTYPE.get(ext, "application/octet-stream")
+
+
+def reset_run_files() -> None:
+    """Vor jedem Request leeren (sonst wandern Dateien in den naechsten Chat)."""
+    _RUN_FILES.clear()
+
+
+def run_files_block() -> str:
+    """Die gesammelten Dateien als (im Markdown unsichtbarer) Anhang-Block."""
+    if not _RUN_FILES:
+        return ""
+    import json as _json
+    items = [{"name": n, "content_type": ct, "b64": b64} for n, (ct, b64) in _RUN_FILES.items()]
+    return f"\n\n{FILES_MARK_BEGIN}\n{_json.dumps(items)}\n{FILES_MARK_END}\n"
+
 
 async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = None) -> str:
     """Python ausfuehren. Bei Eingabedateien (Volltext-Modus) direkt die luftdichte
@@ -970,6 +1013,12 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
         out.append("--- Dateien --- keine")
     for f in fl:
         nm, sz, b64 = f.get("name", ""), f.get("size", 0), f.get("base64")
+        # Fuer OWUI einsammeln -> wird spaeter als Download-Chip angehaengt.
+        if b64 and nm and sz <= SANDBOX_FILE_MAX:
+            _RUN_FILES[nm] = (_guess_ctype(nm), b64)
+        # Kleine Textdateien zusaetzlich inline (das LLM soll das Ergebnis SEHEN
+        # koennen, um es zu pruefen/weiterzuverarbeiten). Grosse Dateien nicht —
+        # sie blaehen den Kontext nur auf; der Download-Chip genuegt.
         if b64 and nm.lower().endswith(_TEXT_OUT) and sz <= 100_000:
             try:
                 content = base64.b64decode(b64).decode("utf-8", "replace")
@@ -977,5 +1026,6 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
                 content = "(nicht dekodierbar)"
             out.append(f"--- Datei: {nm} ({sz} B) ---\n{content[:12000]}")
         else:
-            out.append(f"--- Datei: {nm} ({sz} B) --- (binaer/zu gross; im Sandbox-Volume)")
+            note = "steht als Download in der Antwort" if nm in _RUN_FILES else "zu gross"
+            out.append(f"--- Datei: {nm} ({sz} B) --- ({note})")
     return "\n".join(out)

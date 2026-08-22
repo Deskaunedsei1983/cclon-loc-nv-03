@@ -60,3 +60,8 @@ So entsteht das „claude.ai-Feeling" — Suche liefert automatisch Tiefe, ohne 
 > OWUI bricht Tools nach ~100 s ab. presidio-Pausen (4–7 s × Queries) + Seiten-Laden
 > müssen darunter bleiben — sonst Pausen kürzen oder weniger Queries generieren lassen.
 
+
+## Sandbox-Downloads (`filters/sandbox_files.py`)
+
+Macht vom research-agent ERZEUGTE Dateien im Chat als Download-Kacheln verfuegbar.
+Admin → Functions → "+" → Code einfuegen → aktivieren.

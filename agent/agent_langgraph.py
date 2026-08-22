@@ -316,6 +316,7 @@ _graph = _build()
 async def run_agent(messages: list[dict], user_id: str = "owui",
                     request_body: dict | None = None) -> str:
     query = C.extract_query(messages)
+    C.reset_run_files()   # Sandbox-Dateien pro Anfrage frisch sammeln
     C.schedule_ingest(request_body or {})  # Chat-Upload lokal nach RAGFlow/Morphik (nicht-blockierend)
     mem_context = C.mem_search(_memory, query, user_id)
     init: dict = {"query": query, "mem_context": mem_context}
@@ -329,4 +330,6 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
     if final.get("exec_out"):
         answer += f"\n\n---\nAusfuehrungsergebnis:\n{final['exec_out']}"
     C.mem_add(_memory, query, answer, user_id)
-    return answer
+    # In der Sandbox erzeugte Dateien anhaengen (unsichtbarer Block -> OWUI-Filter
+    # macht daraus Download-Chips). NACH mem_add, damit kein base64 ins Gedaechtnis geht.
+    return answer + C.run_files_block()
