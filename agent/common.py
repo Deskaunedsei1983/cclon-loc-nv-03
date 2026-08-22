@@ -947,10 +947,17 @@ _TEXT_OUT = (".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log",
 # Ohne den Filter bleibt der Block schlicht unsichtbar -> nichts geht kaputt.
 FILES_MARK_BEGIN = "<!--OWUI_FILES"
 FILES_MARK_END = "OWUI_FILES-->"
-# Wie gross darf eine einzelne durchgereichte Datei sein (base64 blaeht ~+33%)?
-SANDBOX_FILE_MAX = int(os.environ.get("SANDBOX_FILE_MAX", str(20 * 1024 * 1024)))
-# Erzeugte Dateien des laufenden Requests (Name -> (content_type, b64)).
-_RUN_FILES: "dict[str, tuple[str, str]]" = {}
+# Bis zu dieser Groesse wird die Datei als base64 durch die CHAT-ANTWORT gereicht
+# (bequem, aber der Text landet so in der OWUI-Chat-DB; base64 blaeht ~+33%).
+SANDBOX_INLINE_MAX = int(os.environ.get("SANDBOX_INLINE_MAX", str(20 * 1024 * 1024)))
+# GROESSERE Dateien werden NICHT transportiert: die Sandbox schreibt sie ohnehin in
+# ihr Volume (code-sandbox-data) und meldet den Pfad. OWUI mountet dasselbe Volume
+# read-only unter /sandbox-work -> der Filter liest die Datei DIREKT von dort.
+# Damit ist die Groesse praktisch unbegrenzt (nur OWUIs eigenes Upload-Limit greift).
+SANDBOX_WORK_PREFIX = os.environ.get("SANDBOX_WORK_PREFIX", "/home/sandbox/work")
+SANDBOX_WORK_MOUNT = os.environ.get("SANDBOX_WORK_MOUNT", "/sandbox-work")
+# Erzeugte Dateien des laufenden Requests: Name -> dict (b64 ODER path).
+_RUN_FILES: "dict[str, dict]" = {}
 
 _CTYPE = {
     ".ipynb": "application/x-ipynb+json", ".json": "application/json",
@@ -975,11 +982,13 @@ def reset_run_files() -> None:
 
 
 def run_files_block() -> str:
-    """Die gesammelten Dateien als (im Markdown unsichtbarer) Anhang-Block."""
+    """Die gesammelten Dateien als (im Markdown unsichtbarer) Anhang-Block.
+    Jeder Eintrag traegt ENTWEDER 'b64' (kleine Datei) ODER 'path' (grosse Datei,
+    liegt im gemounteten Sandbox-Volume und wird von OWUI direkt gelesen)."""
     if not _RUN_FILES:
         return ""
     import json as _json
-    items = [{"name": n, "content_type": ct, "b64": b64} for n, (ct, b64) in _RUN_FILES.items()]
+    items = [{"name": n, **meta} for n, meta in _RUN_FILES.items()]
     return f"\n\n{FILES_MARK_BEGIN}\n{_json.dumps(items)}\n{FILES_MARK_END}\n"
 
 
@@ -1013,9 +1022,17 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
         out.append("--- Dateien --- keine")
     for f in fl:
         nm, sz, b64 = f.get("name", ""), f.get("size", 0), f.get("base64")
+        spath = f.get("path") or ""
         # Fuer OWUI einsammeln -> wird spaeter als Download-Chip angehaengt.
-        if b64 and nm and sz <= SANDBOX_FILE_MAX:
-            _RUN_FILES[nm] = (_guess_ctype(nm), b64)
+        if nm:
+            if b64 and sz <= SANDBOX_INLINE_MAX:
+                _RUN_FILES[nm] = {"content_type": _guess_ctype(nm), "b64": b64, "size": sz}
+            elif spath.startswith(SANDBOX_WORK_PREFIX):
+                # Zu gross fuer den Inline-Transport -> OWUI liest sie aus dem
+                # gemounteten Sandbox-Volume (kein base64, keine Groessengrenze).
+                mounted = SANDBOX_WORK_MOUNT + spath[len(SANDBOX_WORK_PREFIX):]
+                _RUN_FILES[nm] = {"content_type": _guess_ctype(nm), "path": mounted, "size": sz}
+                log.info("Grosse Sandbox-Datei ueber Volume: %s (%d B) -> %s", nm, sz, mounted)
         # Kleine Textdateien zusaetzlich inline (das LLM soll das Ergebnis SEHEN
         # koennen, um es zu pruefen/weiterzuverarbeiten). Grosse Dateien nicht —
         # sie blaehen den Kontext nur auf; der Download-Chip genuegt.
@@ -1026,6 +1043,10 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
                 content = "(nicht dekodierbar)"
             out.append(f"--- Datei: {nm} ({sz} B) ---\n{content[:12000]}")
         else:
-            note = "steht als Download in der Antwort" if nm in _RUN_FILES else "zu gross"
+            if nm in _RUN_FILES:
+                note = ("Download in der Antwort" if "b64" in _RUN_FILES[nm]
+                        else "Download in der Antwort (gross -> ueber Sandbox-Volume)")
+            else:
+                note = "nicht uebertragbar (Pfad unbekannt)"
             out.append(f"--- Datei: {nm} ({sz} B) --- ({note})")
     return "\n".join(out)

@@ -518,6 +518,9 @@ services:
       # Maskierte Suche + Sandbox
       - SEARCH_URL=http://presidio-proxy:8080/search
       - SANDBOX_RUN_URL=http://code-sandbox:8000/run
+      # Erzeugte Dateien -> Downloads in OWUI: bis hier base64 durch die Antwort,
+      # darueber liest OWUI sie direkt aus dem gemounteten Sandbox-Volume.
+      - SANDBOX_INLINE_MAX=${SANDBOX_INLINE_MAX:-20971520}
       # Volltext-Modus: liest ganze OWUI-Uploads aus dem read-only gemounteten Volume.
       - OWUI_DATA_DIR=/owui-data
       # Domain-Vertrauensliste fuer gewichtete Web-Quoten. Hauptliste = gemountete
@@ -737,6 +740,10 @@ services:
       - CODE_INTERPRETER_JUPYTER_AUTH_TOKEN=${JUPYTER_TOKEN:-bitte-zufalls-token-setzen}
     volumes:
       - open-webui-data:/app/backend/data
+      # Grosse, in der Sandbox erzeugte Dateien (> SANDBOX_INLINE_MAX) werden NICHT
+      # base64 durch die Chat-Antwort geschleust, sondern hier direkt gelesen
+      # (read-only!) — der Filter 'sandbox_files.py' legt sie dann als OWUI-Datei ab.
+      - code-sandbox-data:/sandbox-work:ro
     networks:
       - aistack-core
       - aistack-sandbox

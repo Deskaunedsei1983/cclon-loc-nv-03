@@ -15,6 +15,11 @@ description: >
   OWUI-Datei ab (Storage + Files-Tabelle) und haengt sie an message["files"].
   Open WebUI rendert daraus die gewohnten Datei-Kacheln mit Download.
 
+  GROSSE Dateien (> SANDBOX_INLINE_MAX im Agent, Default 20 MB) werden NICHT
+  base64 durch die Antwort geschleust: die Sandbox schreibt sie in ihr Volume, der
+  Agent meldet nur den Pfad, und dieser Filter liest sie direkt aus dem read-only
+  gemounteten /sandbox-work (Pfad wird gegen den Mountpoint geprueft).
+
   Installation: OWUI -> Admin -> Functions -> "+" -> Code einfuegen -> aktivieren,
   global ODER dem Modell "research-agent" zuweisen. Keine Valve ist Pflicht.
 
@@ -27,6 +32,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import uuid
 
@@ -58,7 +64,11 @@ def _parse_block(text: str) -> list:
 class Filter:
     class Valves(BaseModel):
         enabled: bool = Field(default=True, description="Filter aktiv")
-        max_mb: int = Field(default=25, description="Maximalgroesse je Datei (MB)")
+        max_mb: int = Field(default=200, description="Maximalgroesse je Datei (MB)")
+        sandbox_mount: str = Field(
+            default="/sandbox-work",
+            description="Mountpoint des Sandbox-Volumes in OWUI (read-only). "
+                        "Grosse Dateien werden von hier gelesen statt base64 transportiert.")
         keep_marker: bool = Field(
             default=False, description="Anhang-Block im Text stehen lassen (Debug)")
 
@@ -138,11 +148,32 @@ class Filter:
             for it in items:
                 name = it.get("name") or "datei"
                 ctype = it.get("content_type") or "application/octet-stream"
-                try:
-                    raw = base64.b64decode(it.get("b64") or "")
-                except Exception:
-                    log.warning("sandbox_files: '%s' nicht dekodierbar", name)
-                    continue
+                raw = b""
+                if it.get("b64"):
+                    # Kleine Datei: kam base64 durch die Chat-Antwort.
+                    try:
+                        raw = base64.b64decode(it["b64"])
+                    except Exception:
+                        log.warning("sandbox_files: '%s' nicht dekodierbar", name)
+                        continue
+                elif it.get("path"):
+                    # GROSSE Datei: liegt im read-only gemounteten Sandbox-Volume.
+                    # Pfad haerten — nur unterhalb des Mountpoints lesen.
+                    p = os.path.realpath(str(it["path"]))
+                    root = os.path.realpath(self.valves.sandbox_mount)
+                    if not (p == root or p.startswith(root + os.sep)):
+                        log.warning("sandbox_files: Pfad ausserhalb %s abgelehnt: %s", root, p)
+                        continue
+                    try:
+                        if os.path.getsize(p) > limit:
+                            log.warning("sandbox_files: '%s' > %d MB -> uebersprungen",
+                                        name, self.valves.max_mb)
+                            continue
+                        with open(p, "rb") as fh:
+                            raw = fh.read()
+                    except Exception as e:
+                        log.warning("sandbox_files: '%s' nicht lesbar (%s): %s", name, p, e)
+                        continue
                 if not raw or len(raw) > limit:
                     log.warning("sandbox_files: '%s' leer oder > %d MB", name, self.valves.max_mb)
                     continue
