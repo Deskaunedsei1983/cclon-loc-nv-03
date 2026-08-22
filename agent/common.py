@@ -439,6 +439,28 @@ def owui_real_query(content: str) -> str:
 # OWUI keinen Titel/keine Suchquery). Darum grosszuegig + per ENV justierbar.
 TASK_MAX_TOKENS = int(os.environ.get("TASK_MAX_TOKENS", "4096"))
 
+# --- chat_template_kwargs (modellspezifisch, per ENV zuschaltbar) ------------
+# force_nonempty_content: Nemotron-3.5-Lightning gibt beim TOOL-CALLING sonst eine
+# Antwort MIT tool_calls, aber LEEREM content zurueck. Die NVIDIA-Modellkarte
+# empfiehlt fuer Coding-/Tool-Agents genau dieses chat_template_kwarg. Default AUS,
+# damit die Qwen-Profile unveraendert bleiben; fuer main-nemotron in der .env auf
+# true setzen. Unbekannte chat_template_kwargs ignorieren Jinja-Templates still,
+# der Schalter ist also auch modelluebergreifend ungefaehrlich.
+LLM_FORCE_NONEMPTY_CONTENT = os.environ.get(
+    "LLM_FORCE_NONEMPTY_CONTENT", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def llm_extra_body(thinking: bool | None = None) -> dict:
+    """extra_body/Top-Level-Zusatzfelder fuer Chat-Completions. Leeres Dict, wenn
+    nichts zu setzen ist (dann NICHT mitschicken). thinking=None laesst den
+    Modell-Default (Reasoning an), False schaltet den Denkmodus ab."""
+    ctk: dict = {}
+    if thinking is not None:
+        ctk["enable_thinking"] = thinking
+    if LLM_FORCE_NONEMPTY_CONTENT:
+        ctk["force_nonempty_content"] = True
+    return {"chat_template_kwargs": ctk} if ctk else {}
+
 
 async def simple_completion(messages: list[dict], temperature: float = 0.3,
                             max_tokens: int | None = None) -> str:
@@ -449,8 +471,8 @@ async def simple_completion(messages: list[dict], temperature: float = 0.3,
     unbekannte chat_template_kwargs ignorieren die Server stillschweigend)."""
     payload = {"model": LLM_MODEL, "messages": messages,
                "temperature": temperature,
-               "max_tokens": max_tokens or TASK_MAX_TOKENS, "stream": False,
-               "chat_template_kwargs": {"enable_thinking": False}}
+               "max_tokens": max_tokens or TASK_MAX_TOKENS, "stream": False}
+    payload.update(llm_extra_body(thinking=False))
     try:
         async with httpx.AsyncClient() as http:
             r = await http.post(LLM_BASE_URL.rstrip("/") + "/chat/completions",

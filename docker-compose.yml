@@ -482,6 +482,13 @@ services:
       - LLM_BASE_URL=http://vllm-main:5568/v1
       - LLM_MODEL=main # stabil: zeigt immer auf das aktive Hauptmodell
       - LLM_API_KEY=not-needed
+      # Modellspezifische chat_template_kwargs (siehe .env):
+      #  force_nonempty_content -> Nemotron liefert beim Tool-Calling sonst tool_calls
+      #  MIT leerem content (so empfiehlt es die NVIDIA-Modellkarte fuer Tool-Agents).
+      - LLM_FORCE_NONEMPTY_CONTENT=${LLM_FORCE_NONEMPTY_CONTENT:-false}
+      # Token-Budget fuer OWUI-Hintergrundtasks; bei Reasoning-Modellen zaehlt der
+      # Denkprozess mit -> zu klein = leerer content (kein Titel/keine Suchquery).
+      - TASK_MAX_TOKENS=${TASK_MAX_TOKENS:-4096}
       # Embeddings (Mem0)
       - EMBED_BASE_URL=http://embeddings:80/v1
       - EMBED_MODEL=BAAI/bge-m3

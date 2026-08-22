@@ -26,9 +26,15 @@ from langgraph.graph import StateGraph, START, END
 import common as C
 
 _memory = C.build_memory()
-_llm = ChatOpenAI(model=C.LLM_MODEL, base_url=C.LLM_BASE_URL, api_key=C.LLM_API_KEY, temperature=0.2)
+# extra_body: modellspezifische chat_template_kwargs (z.B. force_nonempty_content
+# fuer Nemotron) — None, wenn nichts gesetzt ist. Thinking bleibt hier am
+# Modell-Default (der Chat SOLL denken duerfen).
+_EXTRA = C.llm_extra_body() or None
+_llm = ChatOpenAI(model=C.LLM_MODEL, base_url=C.LLM_BASE_URL, api_key=C.LLM_API_KEY,
+                  temperature=0.2, extra_body=_EXTRA)
 # Deterministisch (temp 0) fuer die strukturierten Verify-Schritte:
-_llm_strict = ChatOpenAI(model=C.LLM_MODEL, base_url=C.LLM_BASE_URL, api_key=C.LLM_API_KEY, temperature=0.0)
+_llm_strict = ChatOpenAI(model=C.LLM_MODEL, base_url=C.LLM_BASE_URL, api_key=C.LLM_API_KEY,
+                         temperature=0.0, extra_body=_EXTRA)
 
 CODE_RE = re.compile(r"```python\s+(.*?)```", re.DOTALL)
 _LIST_MARK = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")  # nur Listenmarker, KEINE Zahl-im-Text

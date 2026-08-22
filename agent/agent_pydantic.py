@@ -34,7 +34,14 @@ class Deps:
 
 
 _model = OpenAIModel(C.LLM_MODEL, provider=OpenAIProvider(base_url=C.LLM_BASE_URL, api_key=C.LLM_API_KEY))
-_agent = Agent(_model, deps_type=Deps, system_prompt=C.SYSTEM_PROMPT, retries=2)
+# model_settings.extra_body: modellspezifische chat_template_kwargs. Fuer DIESE
+# Variante besonders relevant — sie macht echtes Tool-Calling, und Nemotron liefert
+# dabei ohne 'force_nonempty_content' eine Antwort mit tool_calls, aber LEEREM
+# content ('extra_body' ist offizielles ModelSettings-Feld in pydantic-ai 2.x).
+_EXTRA = C.llm_extra_body()
+_SETTINGS = {"extra_body": _EXTRA} if _EXTRA else None
+_agent = Agent(_model, deps_type=Deps, system_prompt=C.SYSTEM_PROMPT, retries=2,
+               model_settings=_SETTINGS)
 
 
 @_agent.tool
