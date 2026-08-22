@@ -108,7 +108,7 @@ Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/v
 | Doku-Wissen (RAG) | **RAGFlow** (eingebettet) · optional Morphik (multimodal) |
 | Memory über Sitzungen | Mem0 + Qdrant |
 | Agentische RAG/Critic-Pipeline | research-agent (Whitelist-Tools, optional Critic-Loop) |
-| Browser/Computer-Use | Profil `computer-use` |
+| Browser/Computer-Use | `browserless` (laeuft immer, lokal) + Playwright in der Sandbox. Profil `computer-use` ist **nicht lokal** (Anthropic-Cloud-Token noetig) -> nicht in `--all` |
 
 ---
 
@@ -201,9 +201,10 @@ openssl rand -hex 32
 | RAGFlow (eigenes Sub-Bundle: ragflow-cpu + ES/MySQL/MinIO/Redis) | ✅ immer | ✅ |
 | Hauptmodell | das **eine** aus `COMPOSE_PROFILES` | dito — die anderen **nie** (exklusiv) |
 | `mem0struct` (CPU-JSON-Helfer) | wenn in `COMPOSE_PROFILES` | ✅ |
-| `morphik`, `microvm`, `computer-use`, `fragments` | nur per CLI-Argument | ✅ |
+| `morphik`, `microvm`, `fragments` | nur per CLI-Argument | ✅ |
 | `blocklist` | wenn in `COMPOSE_PROFILES` | ✅ **nur wenn `BLOCKLIST_URL` gesetzt** |
 | `helper` (GPU-Modell Qwen3.5-4B) | wenn in `COMPOSE_PROFILES` | ❌ **bewusst nicht** — redundant zu `mem0-struct`, kostet ~14 GB VRAM. Nachrüstbar: `./start.sh --all helper` |
+| `computer-use` | nur per CLI-Argument | ❌ **bewusst nicht** — verlangt `ANTHROPIC_AUTH_TOKEN` (Cloud-API) + `GITLAB_TOKEN`; widerspricht der Vorgabe 100 % lokal |
 
 **Welche Modelle lädt der Stack?** `start.sh` listet das beim Start auf. Im
 Default (`main-nemotron,mem0struct`) sind es vier — drei auf der GPU, eines auf der CPU:
@@ -215,8 +216,10 @@ Default (`main-nemotron,mem0struct`) sind es vier — drei auf der GPU, eines au
 | BAAI/bge-m3 (1024 Dim) | `embeddings` (TEI) | **nur Mem0** | GPU, ~2–3 GB |
 | `MEM0_STRUCT_HF` (Qwen2.5-3B GGUF) | `mem0-struct` | mem0-JSON + OWUI-Tasks | **CPU**, ~0 VRAM |
 
-Mit `--all` kommt ColPali (`tsystems/colqwen2.5-3b-multilingual`, ~7–8 GB GPU) über
-Morphik dazu. OWUI nutzt für Chat-Uploads zusätzlich sein eingebautes
+Mit `--all` kommt ColPali über Morphik dazu — **rechne ~14 GB GPU**, nicht 7–8: Morphik
+lädt das Modell **zweimal** (ARQ-Worker *und* Uvicorn-Server). Reicht der freie VRAM
+nicht, stirbt Morphik mit `torch.OutOfMemoryError` und startet in einer Schleife neu.
+Erster Hebel: `helper` weglassen (spart ~14 GB und ist ohnehin redundant). OWUI nutzt für Chat-Uploads zusätzlich sein eingebautes
 `all-MiniLM-L6-v2` (CPU) — die drei Embedder haben **verschiedene Dimensionen** und
 sind bewusst getrennt.
 

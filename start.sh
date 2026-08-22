@@ -19,7 +19,6 @@ cd "$(dirname "$0")"
 #   mem0struct    CPU-JSON-Helfer: bedient mem0 UND OWUIs Task-Modell (~0 VRAM)
 #   morphik       multimodales/visuelles RAG (ColPali laeuft lokal auf der GPU)
 #   microvm       hardware-isolierter Code-Executor (Microsandbox)
-#   computer-use  Browser-/Desktop-Automation
 #   fragments     echte React-Artifacts
 # BEWUSST NICHT in --all:
 #   helper                 GPU-Modell Qwen3.5-4B (~14 GB VRAM) — REDUNDANT: seine
@@ -29,7 +28,12 @@ cd "$(dirname "$0")"
 #                          das eine aus COMPOSE_PROFILES (sonst doppelter VRAM)
 #   blocklist              Opt-in (Internet-Egress im Sidecar); wird von --all nur
 #                          aktiviert, wenn BLOCKLIST_URL in der .env gesetzt ist
-FULL_PROFILES=(mem0struct morphik microvm computer-use fragments)
+#   computer-use           Das Image ist eine CLAUDE-CODE-Umgebung: es verlangt
+#                          ANTHROPIC_AUTH_TOKEN (Cloud-API!) und GITLAB_TOKEN und
+#                          startet ohne sie seinen Dienst nicht. Das widerspricht der
+#                          Stack-Vorgabe "100% lokal/DSGVO" -> nicht in --all.
+#                          Bewusst trotzdem: ./start.sh computer-use
+FULL_PROFILES=(mem0struct morphik microvm fragments)
 # Alle bekannten optionalen Profile (Validierung/Doku):
 OPTIONAL_PROFILES=(helper mem0struct blocklist morphik microvm computer-use fragments)
 # Profile, die im Upgrade-Overlay (docker-compose.upgrades.yml) definiert sind:
@@ -187,6 +191,24 @@ fi
 #  Macht sichtbar, was tatsaechlich GPU-Speicher belegt (haeufigste Fehlerquelle:
 #  zu viele GPU-Dienste gleichzeitig -> OOM beim Laden).
 _envget() { [ -f .env ] && grep -E "^[[:space:]]*$1=" .env | tail -n1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//' | tr -d "\"' " ; }
+# VRAM grob gegenrechnen: die --gpu-memory-utilization-Werte sind RESERVIERUNGEN
+# gegen die GESAMT-VRAM. Morphik/ColPali braucht ~14 GB (Worker UND Server laden je
+# eine Instanz) und bekommt sonst "CUDA out of memory".
+_vram_hint() {
+  local total used free
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  read -r total used free < <(nvidia-smi --query-gpu=memory.total,memory.used,memory.free \
+                              --format=csv,noheader,nounits | tr ',' ' ')
+  echo "   GPU: ${total} MiB gesamt, ${used} MiB belegt, ${free} MiB frei (vor dem Start)"
+  case "$SEEN" in *" morphik "*)
+    case "$SEEN" in *" helper "*)
+      echo "   ! morphik UND helper gleichzeitig: ColPali braucht ~14 GB (2 Instanzen),"
+      echo "     der GPU-Helfer ~14 GB und ist REDUNDANT (mem0-struct macht dasselbe auf CPU)."
+      echo "     Bei knappem VRAM zuerst 'helper' weglassen: ./start.sh --all" ;;
+    esac ;;
+  esac
+}
+_vram_hint
 echo "   --- Modelle in diesem Start ---"
 case "$MAIN_PROFILE" in
   main-nemotron) echo "     Hauptmodell : nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 + DSpark-Draft  [GPU, util $(_envget NEMOTRON_GPU_UTIL || echo 0.40)]" ;;

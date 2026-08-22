@@ -780,6 +780,15 @@ services:
   #  Docker-Socket -> das ist eine HOST-Vertrauensgrenze. Fuer echte Isolation
   #  rootless Docker + gVisor, oder Kata via K8s. Siehe ./open-computer-use/README.md.
   # ==========================================================================
+  #  ACHTUNG — NICHT LOKAL: Das Image ghcr.io/wide-moat/open-computer-use ist eine
+  #  CLAUDE-CODE-Umgebung. Es verlangt ANTHROPIC_AUTH_TOKEN (Anthropic-CLOUD-API)
+  #  und GITLAB_TOKEN; ohne sie startet sein Dienst nicht ("Claude Code will not
+  #  work"), MIT ihnen liefen Prompts/Code ueber die Cloud. Das widerspricht der
+  #  Stack-Vorgabe "100% lokale Inferenz / DSGVO" -> daher NICHT in ./start.sh --all.
+  #  Bewusster Start trotzdem:  ./start.sh computer-use
+  #  Fuer lokale Browser-Automation ohne Cloud gibt es 'browserless' (laeuft immer)
+  #  bzw. Playwright in der Code-Sandbox.
+  # ==========================================================================
   ocu-postgres:
     profiles: ["computer-use"]
     image: postgres:16-alpine
