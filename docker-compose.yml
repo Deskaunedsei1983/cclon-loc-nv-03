@@ -738,6 +738,18 @@ services:
       - CODE_INTERPRETER_JUPYTER_URL=http://code-sandbox:8888
       - CODE_INTERPRETER_JUPYTER_AUTH=token
       - CODE_INTERPRETER_JUPYTER_AUTH_TOKEN=${JUPYTER_TOKEN:-bitte-zufalls-token-setzen}
+      # --- Sub-Agents (OWUI 0.11): das Hauptmodell darf Teilaufgaben an eigene
+      # Unter-Agenten delegieren (eingebautes 'delegate'-Tool). Braucht ein Modell
+      # mit TOOL-CALLING — unser Nemotron/Qwen kann das. Laeuft komplett lokal.
+      # Default in OWUI ist AUS; hier eingeschaltet und per .env justierbar.
+      - ENABLE_SUBAGENTS=${OWUI_SUBAGENTS:-true}
+      - SUBAGENTS_BACKGROUND_ENABLED=${OWUI_SUBAGENTS_BACKGROUND:-true}
+      # Konservativ gedeckelt: jeder Sub-Agent belegt eine LLM-Slot-Anfrage, und
+      # vllm-main laeuft mit --max-num-seqs 2 -> zu viele parallel wuerden sich
+      # gegenseitig ausbremsen.
+      - SUBAGENTS_MAX_CONCURRENT=${OWUI_SUBAGENTS_MAX_CONCURRENT:-3}
+      - SUBAGENTS_MAX_ASYNC=${OWUI_SUBAGENTS_MAX_ASYNC:-3}
+      - SUBAGENTS_MAX_ITERATIONS=${OWUI_SUBAGENTS_MAX_ITERATIONS:-15}
     volumes:
       - open-webui-data:/app/backend/data
       # Grosse, in der Sandbox erzeugte Dateien (> SANDBOX_INLINE_MAX) werden NICHT
