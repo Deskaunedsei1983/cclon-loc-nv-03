@@ -5,13 +5,29 @@
 #  - Wiederholt Pulls/Starts automatisch (transiente Netz-Timeouts).
 #  - Bricht NICHT beim ersten Teilfehler ab -> Endzustand wird immer protokolliert.
 #
-#  Ohne Argumente: nur der saubere Kernstack.
+#  Ohne Argumente: Kernstack + Observability + die Profile aus der .env.
 #  Mit Profil(en):  ./start.sh microvm computer-use morphik
+#  ALLES starten :  ./start.sh --all      (jedes optionale Profil + das in der .env
+#                                          gewaehlte Hauptmodell)
 # ============================================================================
 set -uo pipefail              # kein -e: Lauf soll durchlaufen + Endzustand loggen
 cd "$(dirname "$0")"
 
-PROFILES=("$@")
+# --all = jedes optionale Profil aktivieren (Hauptmodell bleibt das aus der .env).
+# Alle optionalen Profile des Stacks — HIER pflegen, wenn ein Profil dazukommt.
+OPTIONAL_PROFILES=(helper mem0struct blocklist morphik microvm computer-use fragments)
+# Profile, die im Upgrade-Overlay (docker-compose.upgrades.yml) definiert sind:
+UPGRADE_PROFILES=(microvm computer-use morphik)
+
+START_ALL=0
+PROFILES=()
+for a in "$@"; do
+  case "$a" in
+    --all|-a) START_ALL=1 ;;
+    -*) echo "Unbekannte Option: $a (erlaubt: --all)"; exit 1 ;;
+    *) PROFILES+=("$a") ;;
+  esac
+done
 
 # --- Logging in Datei + Konsole --------------------------------------------
 LOG_DIR="./logs"
@@ -102,14 +118,43 @@ MAIN_PROFILE="main-qwen"
 echo "   + Hauptmodell-Profil: $MAIN_PROFILE"
 MAIN_PROFILE_ARGS=(--profile "$MAIN_PROFILE")
 
-# --- Upgrade-Profile (per CLI, z.B. ./start.sh morphik) ---------------------
+# --- Optionale Profile: .env + CLI + --all ----------------------------------
+#  WICHTIG: Die Nicht-Hauptmodell-Profile aus COMPOSE_PROFILES (mem0struct,
+#  blocklist, helper ...) werden EXPLIZIT als --profile durchgereicht. Sonst haengt
+#  es an der Compose-Version, ob COMPOSE_PROFILES und --profile VEREINIGT oder
+#  UEBERSCHRIEBEN werden — im Ueberschreib-Fall startete z.B. mem0-struct nicht.
+WANTED=()
+if [ "$START_ALL" = "1" ]; then
+  WANTED=("${OPTIONAL_PROFILES[@]}")
+  echo "   + --all: alle optionalen Profile (${OPTIONAL_PROFILES[*]})"
+else
+  # aus der .env (alles ausser den main-*-Profilen)
+  IFS=',' read -r -a _envp <<< "$ENV_PROFILES"
+  for p in "${_envp[@]:-}"; do
+    p="$(echo "$p" | tr -d '[:space:]')"
+    case "$p" in ""|main-*) continue ;; esac
+    WANTED+=("$p")
+  done
+  # per CLI ergaenzt
+  for p in "${PROFILES[@]:-}"; do [ -n "$p" ] && WANTED+=("$p"); done
+fi
+
+# deduplizieren + Argumente bauen; Upgrade-Overlay nur einbinden, wenn noetig
 PROFILE_ARGS=()
-for p in "${PROFILES[@]:-}"; do
-  [ -n "$p" ] || continue
+NEED_UPGRADES=0
+SEEN=" "
+for p in "${WANTED[@]:-}"; do
+  [ -n "$p" ] || continue                      # leeres Element (leeres Array + :-) ueberspringen
+  case "$SEEN" in *" $p "*) continue ;; esac
+  SEEN="$SEEN$p "
   PROFILE_ARGS+=(--profile "$p")
+  for u in "${UPGRADE_PROFILES[@]}"; do [ "$p" = "$u" ] && NEED_UPGRADES=1; done
 done
 if [ "${#PROFILE_ARGS[@]}" -gt 0 ]; then
-  echo "   + Upgrade-Overlay aktiv: ${PROFILES[*]}"
+  echo "   + Optionale Profile:$SEEN"
+fi
+if [ "$NEED_UPGRADES" = "1" ]; then
+  echo "   + Upgrade-Overlay aktiv (docker-compose.upgrades.yml)"
   COMPOSE_FILES+=(-f docker-compose.upgrades.yml)
 fi
 dc() { docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" "$@"; }
@@ -211,8 +256,8 @@ if [ "$SERIAL_GPU_LOAD" = "1" ]; then
   retry 3 dc up -d --no-deps embeddings;   wait_health "http://localhost:8082/health" "TEI bge-m3" 15
   echo ">> [seriell 3/4] RAGFlow/Morphik-Embedder (vllm-embed)"
   retry 3 dc up -d --no-deps vllm-embed;   wait_health "http://localhost:8091/health" "vLLM embed" 20
-  case ",$ENV_PROFILES," in
-    *,helper,*)
+  case "$SEEN" in
+    *" helper "*)
       echo ">> [seriell 4/4] Helfer (vllm-helper)"
       retry 3 dc --profile helper up -d --no-deps vllm-helper
       wait_health "http://localhost:30001/health" "vLLM helper" 15 ;;

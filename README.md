@@ -184,12 +184,29 @@ cp .env.example .env
 # Secrets erzeugen und eintragen (WEBUI_SECRET_KEY, SEARXNG_SECRET, JUPYTER_TOKEN):
 openssl rand -hex 32
 
-./start.sh            # legt Netz an, startet RAGFlow, dann den Hauptstack
-# mit Upgrade(s):  ./start.sh morphik        bzw.  ./start.sh microvm computer-use
+./start.sh            # Netz + RAGFlow + Kernstack + Observability + .env-Profile
+./start.sh --all      # ALLES: zusaetzlich jedes optionale Profil (siehe Tabelle)
+./start.sh morphik microvm   # gezielt einzelne Profile ergaenzen
+
+./stop.sh             # stoppt ALLES (alle Profile + RAGFlow); Daten bleiben
+./stop.sh --volumes   # zusaetzlich Volumes loeschen (DATENVERLUST!)
 ```
 
+**Was startet wann?**
+
+| | ohne Argument | `--all` |
+|---|---|---|
+| Kern (Agent, OWUI, Sandbox, SearXNG, Presidio, Qdrant, Embedder, ingest-router, browserless) | ✅ immer | ✅ |
+| Observability (Grafana/Loki/Promtail/Prometheus/Exporter/Dozzle/netdata) | ✅ immer (`LOGGING_STACK=0` schaltet ab) | ✅ |
+| RAGFlow (eigenes Sub-Bundle) | ✅ immer | ✅ |
+| Hauptmodell | das **eine** aus `COMPOSE_PROFILES` | dito (schließen sich aus) |
+| `mem0struct`, `helper`, `blocklist` | nur wenn in `COMPOSE_PROFILES` | ✅ alle |
+| `morphik`, `microvm`, `computer-use`, `fragments` | nur per CLI-Argument | ✅ alle |
+
 `start.sh` erledigt: `docker network create aistack-rag` → RAGFlow hoch
-(`./ragflow`) → Hauptstack hoch. Beim ersten Mal laden vLLM/Embeddings die
+(`./ragflow`) → Hauptstack hoch. Die Profile aus der `.env` werden **explizit** als
+`--profile` durchgereicht (sonst hängt es an der Compose-Version, ob
+`COMPOSE_PROFILES` und `--profile` vereinigt werden). Beim ersten Mal laden vLLM/Embeddings die
 Modelle von HuggingFace (danach `HF_HUB_OFFLINE=1` in der Compose → offline).
 
 ### RAGFlow erstmalig einrichten (einmalig, ~2 Min.)
