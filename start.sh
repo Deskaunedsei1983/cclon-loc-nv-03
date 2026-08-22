@@ -13,8 +13,24 @@
 set -uo pipefail              # kein -e: Lauf soll durchlaufen + Endzustand loggen
 cd "$(dirname "$0")"
 
-# --all = jedes optionale Profil aktivieren (Hauptmodell bleibt das aus der .env).
-# Alle optionalen Profile des Stacks — HIER pflegen, wenn ein Profil dazukommt.
+# --all = VOLLER Funktionsumfang. Enthalten sind nur Profile, die der Stack fuer
+# echte Funktionen braucht — KEINE Reserve-/Wechsel-Container und nichts, was nur
+# VRAM kostet, ohne etwas beizutragen:
+#   mem0struct    CPU-JSON-Helfer: bedient mem0 UND OWUIs Task-Modell (~0 VRAM)
+#   morphik       multimodales/visuelles RAG (ColPali laeuft lokal auf der GPU)
+#   microvm       hardware-isolierter Code-Executor (Microsandbox)
+#   computer-use  Browser-/Desktop-Automation
+#   fragments     echte React-Artifacts
+# BEWUSST NICHT in --all:
+#   helper                 GPU-Modell Qwen3.5-4B (~14 GB VRAM) — REDUNDANT: seine
+#                          Rolle (mem0 + OWUI-Tasks) hat mem0-struct auf der CPU
+#                          uebernommen. Bei Bedarf: ./start.sh --all helper
+#   main-qwen/-qwen-plain  alternative HAUPTMODELLE — exklusiv, es laeuft immer nur
+#                          das eine aus COMPOSE_PROFILES (sonst doppelter VRAM)
+#   blocklist              Opt-in (Internet-Egress im Sidecar); wird von --all nur
+#                          aktiviert, wenn BLOCKLIST_URL in der .env gesetzt ist
+FULL_PROFILES=(mem0struct morphik microvm computer-use fragments)
+# Alle bekannten optionalen Profile (Validierung/Doku):
 OPTIONAL_PROFILES=(helper mem0struct blocklist morphik microvm computer-use fragments)
 # Profile, die im Upgrade-Overlay (docker-compose.upgrades.yml) definiert sind:
 UPGRADE_PROFILES=(microvm computer-use morphik)
@@ -125,8 +141,18 @@ MAIN_PROFILE_ARGS=(--profile "$MAIN_PROFILE")
 #  UEBERSCHRIEBEN werden — im Ueberschreib-Fall startete z.B. mem0-struct nicht.
 WANTED=()
 if [ "$START_ALL" = "1" ]; then
-  WANTED=("${OPTIONAL_PROFILES[@]}")
-  echo "   + --all: alle optionalen Profile (${OPTIONAL_PROFILES[*]})"
+  WANTED=("${FULL_PROFILES[@]}")
+  # blocklist nur, wenn eine Quelle konfiguriert ist (sonst laeuft ein Egress-
+  # Sidecar ohne Zweck) — DSGVO-Entscheidung bleibt bei der .env.
+  if [ -f .env ] && grep -qE '^[[:space:]]*BLOCKLIST_URL=[^[:space:]]' .env; then
+    WANTED+=(blocklist)
+  else
+    echo "   ! --all: 'blocklist' uebersprungen (BLOCKLIST_URL in .env leer)"
+  fi
+  echo "   ! --all: 'helper' NICHT gestartet (redundant zu mem0-struct, ~14 GB VRAM)."
+  echo "     Trotzdem gewuenscht:  ./start.sh --all helper"
+  # per CLI zusaetzlich angeforderte Profile (z.B. helper) ergaenzen
+  for p in "${PROFILES[@]:-}"; do [ -n "$p" ] && WANTED+=("$p"); done
 else
   # aus der .env (alles ausser den main-*-Profilen)
   IFS=',' read -r -a _envp <<< "$ENV_PROFILES"
@@ -157,6 +183,23 @@ if [ "$NEED_UPGRADES" = "1" ]; then
   echo "   + Upgrade-Overlay aktiv (docker-compose.upgrades.yml)"
   COMPOSE_FILES+=(-f docker-compose.upgrades.yml)
 fi
+# --- Uebersicht: welche MODELLE lauft dieser Start? -------------------------
+#  Macht sichtbar, was tatsaechlich GPU-Speicher belegt (haeufigste Fehlerquelle:
+#  zu viele GPU-Dienste gleichzeitig -> OOM beim Laden).
+_envget() { [ -f .env ] && grep -E "^[[:space:]]*$1=" .env | tail -n1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//' | tr -d "\"' " ; }
+echo "   --- Modelle in diesem Start ---"
+case "$MAIN_PROFILE" in
+  main-nemotron) echo "     Hauptmodell : nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 + DSpark-Draft  [GPU, util $(_envget NEMOTRON_GPU_UTIL || echo 0.40)]" ;;
+  main-qwen)     echo "     Hauptmodell : nvidia/Qwen3.6-35B-A3B-NVFP4 (MTP)                                 [GPU, util 0.35]" ;;
+  main-qwen-plain) echo "     Hauptmodell : unsloth/Qwen3.6-27B-NVFP4 (ohne MTP)                             [GPU, util 0.35]" ;;
+esac
+echo "     RAG-Embedder: $(_envget EMBED_MODEL || echo 'Qwen/Qwen3-Embedding-8B')                          [GPU, util $(_envget EMBED_GPU_UTIL || echo 0.30)]  -> RAGFlow/Morphik"
+echo "     Mem0-Embedder: BAAI/bge-m3 (TEI)                                                [GPU, ~2-3 GB]  -> nur Mem0"
+case "$SEEN" in *" mem0struct "*) echo "     JSON-Helfer : $(_envget MEM0_STRUCT_HF || echo 'Qwen/Qwen2.5-3B-Instruct-GGUF:Q4_K_M')   [CPU, ~0 VRAM] -> mem0 + OWUI-Tasks" ;; esac
+case "$SEEN" in *" helper "*)     echo "     GPU-Helfer  : Qwen/Qwen3.5-4B                                                   [GPU, util 0.15] (redundant)" ;; esac
+case "$SEEN" in *" morphik "*)    echo "     ColPali     : tsystems/colqwen2.5-3b-multilingual (in morphik)                  [GPU, ~7-8 GB]" ;; esac
+echo "     (OWUI nutzt fuer Chat-Uploads zusaetzlich sein eingebautes all-MiniLM-L6-v2 auf CPU)"
+
 dc() { docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" "$@"; }
 main_up() { dc up -d --build; }
 

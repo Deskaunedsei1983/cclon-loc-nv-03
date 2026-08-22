@@ -196,12 +196,29 @@ openssl rand -hex 32
 
 | | ohne Argument | `--all` |
 |---|---|---|
-| Kern (Agent, OWUI, Sandbox, SearXNG, Presidio, Qdrant, Embedder, ingest-router, browserless) | ✅ immer | ✅ |
+| Kern (Agent, OWUI, Code-Sandbox, SearXNG, Presidio, Qdrant, **vllm-embed**, **embeddings/TEI**, ingest-router, browserless) | ✅ immer | ✅ |
 | Observability (Grafana/Loki/Promtail/Prometheus/Exporter/Dozzle/netdata) | ✅ immer (`LOGGING_STACK=0` schaltet ab) | ✅ |
-| RAGFlow (eigenes Sub-Bundle) | ✅ immer | ✅ |
-| Hauptmodell | das **eine** aus `COMPOSE_PROFILES` | dito (schließen sich aus) |
-| `mem0struct`, `helper`, `blocklist` | nur wenn in `COMPOSE_PROFILES` | ✅ alle |
-| `morphik`, `microvm`, `computer-use`, `fragments` | nur per CLI-Argument | ✅ alle |
+| RAGFlow (eigenes Sub-Bundle: ragflow-cpu + ES/MySQL/MinIO/Redis) | ✅ immer | ✅ |
+| Hauptmodell | das **eine** aus `COMPOSE_PROFILES` | dito — die anderen **nie** (exklusiv) |
+| `mem0struct` (CPU-JSON-Helfer) | wenn in `COMPOSE_PROFILES` | ✅ |
+| `morphik`, `microvm`, `computer-use`, `fragments` | nur per CLI-Argument | ✅ |
+| `blocklist` | wenn in `COMPOSE_PROFILES` | ✅ **nur wenn `BLOCKLIST_URL` gesetzt** |
+| `helper` (GPU-Modell Qwen3.5-4B) | wenn in `COMPOSE_PROFILES` | ❌ **bewusst nicht** — redundant zu `mem0-struct`, kostet ~14 GB VRAM. Nachrüstbar: `./start.sh --all helper` |
+
+**Welche Modelle lädt der Stack?** `start.sh` listet das beim Start auf. Im
+Default (`main-nemotron,mem0struct`) sind es vier — drei auf der GPU, eines auf der CPU:
+
+| Modell | Dienst | Wofür | Last |
+|---|---|---|---|
+| Nemotron-3.5-Lightning-30B-A3B-NVFP4 **+ DSpark-Draft** | `vllm-main-nemotron` | Chat/Agent (`main`) | GPU, `NEMOTRON_GPU_UTIL` (0.40 ≈ 38 GB) |
+| `EMBED_MODEL` (Qwen3-Embedding-4B, 2560 Dim) | `vllm-embed` | **RAGFlow + Morphik** | GPU, `EMBED_GPU_UTIL` (0.15 ≈ 14 GB) |
+| BAAI/bge-m3 (1024 Dim) | `embeddings` (TEI) | **nur Mem0** | GPU, ~2–3 GB |
+| `MEM0_STRUCT_HF` (Qwen2.5-3B GGUF) | `mem0-struct` | mem0-JSON + OWUI-Tasks | **CPU**, ~0 VRAM |
+
+Mit `--all` kommt ColPali (`tsystems/colqwen2.5-3b-multilingual`, ~7–8 GB GPU) über
+Morphik dazu. OWUI nutzt für Chat-Uploads zusätzlich sein eingebautes
+`all-MiniLM-L6-v2` (CPU) — die drei Embedder haben **verschiedene Dimensionen** und
+sind bewusst getrennt.
 
 `start.sh` erledigt: `docker network create aistack-rag` → RAGFlow hoch
 (`./ragflow`) → Hauptstack hoch. Die Profile aus der `.env` werden **explizit** als
