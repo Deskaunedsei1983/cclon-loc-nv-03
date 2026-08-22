@@ -8,12 +8,21 @@ description: >
   als klickbare Download-Chips verfuegbar (statt sie als riesigen JSON-/Textblock
   in die Antwort zu kippen).
 
-  Wie es funktioniert: Der Agent haengt seine erzeugten Dateien als HTML-Kommentar
-  an die Antwort (im Markdown unsichtbar):
-      <!--OWUI_FILES [{"name":..., "content_type":..., "b64":...}] OWUI_FILES-->
+  Wie es funktioniert: Der Agent haengt seine erzeugten Dateien als Marker-Block
+  an die Antwort:
+      <!--OWUI_FILES [{"name":..., "content_type":..., "path":...}] OWUI_FILES-->
   Dieser outlet-Filter schneidet den Block heraus, legt jede Datei als ECHTE
-  OWUI-Datei ab (Storage + Files-Tabelle) und haengt sie an message["files"].
-  Open WebUI rendert daraus die gewohnten Datei-Kacheln mit Download.
+  OWUI-Datei ab (Storage + Files-Tabelle) und
+    a) haengt sie an message["files"]  -> Datei-Kachel, und
+    b) ersetzt den Block durch echte Markdown-DOWNLOAD-LINKS.
+  (b) ist wichtig: Ein Klick auf die KACHEL oeffnet in OWUI nur das Vorschau-Modal
+  (FileItem.svelte: bei type=='file' immer showModal) — der Download steckt dort
+  versteckt hinter dem Dateinamen. Der Markdown-Link ist EIN Klick.
+
+  HINWEIS: Der Marker ist KEIN unsichtbarer Kommentar — OWUI sanitized HTML und
+  zeigt ihn als Text. Ohne aktiven Filter bleibt er also sichtbar (kurz, da nur
+  Pfade, kein base64). Die gefilterte Fassung erscheint nach dem Neuladen des
+  Chats, weil die gestreamte Antwort im Browser schon steht.
 
   GROSSE Dateien (> SANDBOX_INLINE_MAX im Agent, Default 20 MB) werden NICHT
   base64 durch die Antwort geschleust: die Sandbox schreibt sie in ihr Volume, der
@@ -42,6 +51,17 @@ log = logging.getLogger("owui.sandbox_files")
 
 # Muss zu agent/common.py (FILES_MARK_BEGIN/END) passen.
 _BLOCK_RE = re.compile(r"<!--OWUI_FILES\s*(.*?)\s*OWUI_FILES-->", re.DOTALL)
+
+
+# Die vom Agent geschriebene Klartext-Zeile (wird durch echte Links ersetzt).
+_HUMAN_RE = re.compile(r"\n*\*\*Erzeugte Dateien:\*\*[^\n]*", re.IGNORECASE)
+
+
+def _hr(n) -> str:
+    n = int(n or 0)
+    if n >= 1048576:
+        return f"{n/1048576:.1f} MB"
+    return f"{n/1024:.1f} KB" if n >= 1024 else f"{n} B"
 
 
 def _strip_block(text: str) -> str:
@@ -144,6 +164,7 @@ class Filter:
             user_id = (__user__ or {}).get("id") or body.get("user_id") or "owui"
             limit = max(1, int(self.valves.max_mb)) * 1024 * 1024
             attached = list(last.get("files") or [])
+            links: list = []
 
             for it in items:
                 name = it.get("name") or "datei"
@@ -190,12 +211,23 @@ class Filter:
                     "content_type": ctype,
                     "collection_name": None,
                 })
+                links.append(f"[{name} ({_hr(size)})](/api/v1/files/{fid}/content)")
                 log.info("sandbox_files: '%s' (%d B) angehaengt", name, size)
 
             if attached:
                 last["files"] = attached
             if not self.valves.keep_marker:
-                last["content"] = _strip_block(content)
+                # Marker raus UND durch echte Markdown-DOWNLOAD-LINKS ersetzen.
+                # Wichtig: Ein Klick auf die Datei-KACHEL oeffnet in OWUI nur das
+                # Vorschau-Modal (FileItem.svelte: bei type=='file' immer showModal);
+                # der Download steckt dort versteckt hinter dem Dateinamen. Ein
+                # direkter Link ist EIN Klick — und OWUI akzeptiert das Auth-Token
+                # auch aus dem Cookie, der Browser-Download funktioniert also.
+                body_text = _strip_block(content)
+                if links:
+                    body_text = _HUMAN_RE.sub("", body_text).rstrip()
+                    body_text += "\n\n**Erzeugte Dateien:** " + " · ".join(links)
+                last["content"] = body_text
         except Exception:
             # Niemals den Chat blockieren.
             log.exception("sandbox_files: outlet uebersprungen (Fehler)")
