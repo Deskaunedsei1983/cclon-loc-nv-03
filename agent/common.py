@@ -989,7 +989,16 @@ def run_files_block() -> str:
         return ""
     import json as _json
     items = [{"name": n, **meta} for n, meta in _RUN_FILES.items()]
-    return f"\n\n{FILES_MARK_BEGIN}\n{_json.dumps(items)}\n{FILES_MARK_END}\n"
+
+    def _hr(b):
+        b = int(b or 0)
+        return f"{b/1048576:.1f} MB" if b >= 1048576 else (f"{b/1024:.1f} KB" if b >= 1024 else f"{b} B")
+
+    # Lesbare Zeile: ist der OWUI-Filter NICHT installiert, sieht man wenigstens,
+    # welche Dateien erzeugt wurden (der Filter ersetzt sie durch echte Kacheln).
+    names = ", ".join(f"{i['name']} ({_hr(i.get('size'))})" for i in items)
+    human = f"\n\n**Erzeugte Dateien:** {names}"
+    return f"{human}\n\n{FILES_MARK_BEGIN}\n{_json.dumps(items)}\n{FILES_MARK_END}\n"
 
 
 async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = None) -> str:
@@ -1024,15 +1033,18 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
         nm, sz, b64 = f.get("name", ""), f.get("size", 0), f.get("base64")
         spath = f.get("path") or ""
         # Fuer OWUI einsammeln -> wird spaeter als Download-Chip angehaengt.
+        # BEVORZUGT den Volume-Pfad: OWUI mountet dasselbe Sandbox-Volume read-only,
+        # liest die Datei also direkt. Damit bleibt der Anhang-Block WINZIG (ein paar
+        # hundert Zeichen) statt base64 in den Chat-Text zu kippen — unabhaengig von
+        # der Dateigroesse. base64 nur, wenn kein nutzbarer Pfad vorliegt.
         if nm:
-            if b64 and sz <= SANDBOX_INLINE_MAX:
-                _RUN_FILES[nm] = {"content_type": _guess_ctype(nm), "b64": b64, "size": sz}
-            elif spath.startswith(SANDBOX_WORK_PREFIX):
-                # Zu gross fuer den Inline-Transport -> OWUI liest sie aus dem
-                # gemounteten Sandbox-Volume (kein base64, keine Groessengrenze).
+            if spath.startswith(SANDBOX_WORK_PREFIX):
                 mounted = SANDBOX_WORK_MOUNT + spath[len(SANDBOX_WORK_PREFIX):]
                 _RUN_FILES[nm] = {"content_type": _guess_ctype(nm), "path": mounted, "size": sz}
-                log.info("Grosse Sandbox-Datei ueber Volume: %s (%d B) -> %s", nm, sz, mounted)
+                log.info("Sandbox-Datei ueber Volume: %s (%d B) -> %s", nm, sz, mounted)
+            elif b64 and sz <= SANDBOX_INLINE_MAX:
+                _RUN_FILES[nm] = {"content_type": _guess_ctype(nm), "b64": b64, "size": sz}
+                log.info("Sandbox-Datei inline (kein Volume-Pfad): %s (%d B)", nm, sz)
         # Kleine Textdateien zusaetzlich inline (das LLM soll das Ergebnis SEHEN
         # koennen, um es zu pruefen/weiterzuverarbeiten). Grosse Dateien nicht —
         # sie blaehen den Kontext nur auf; der Download-Chip genuegt.
