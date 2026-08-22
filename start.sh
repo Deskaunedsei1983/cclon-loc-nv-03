@@ -417,11 +417,10 @@ check_all() {
     "research-agent (9009)|http://localhost:9009/healthz|"
     "ingest-router (9010)|http://localhost:9010/healthz|"
     "Open WebUI (3009)|http://localhost:3009/health|"
-    "RAGFlow API (9380)|http://localhost:9380/v1/system/version|"
+    "RAGFlow UI (80)|http://localhost/|"
     "Grafana (${GRAFANA_PORT:-3011})|http://localhost:${GRAFANA_PORT:-3011}/api/health|OBS"
     "Prometheus (${PROMETHEUS_PORT:-9090})|http://localhost:${PROMETHEUS_PORT:-9090}/-/healthy|OBS"
     "Dozzle (${DOZZLE_PORT:-8085})|http://localhost:${DOZZLE_PORT:-8085}/|OBS"
-    "mem0-struct (8088)|http://localhost:8088/v1/models|mem0struct"
     "vLLM helper (30001)|http://localhost:30001/health|helper"
     "Morphik (8083)|http://localhost:8083/health|morphik"
     "microVM-Executor (8077)|http://localhost:8077/healthz|microvm"
@@ -474,10 +473,45 @@ check_containers() {
   fi
 }
 
+# Dienste OHNE Host-Port (nur im Docker-Netz erreichbar) -> ueber Container-Status
+# und den vom Image mitgebrachten Healthcheck pruefen, nicht ueber localhost.
+check_internal() {
+  echo "   --- Interne Dienste (kein Host-Port) ---"
+  local line name cn cond st hs
+  local ICHECKS=(
+    "mem0-struct|mem0_struct|mem0struct"
+    "SearXNG|searxng|"
+    "presidio-proxy|presidio_proxy|"
+    "code-sandbox|code_sandbox|"
+    "browserless|browserless|"
+    "Loki|loki|OBS"
+    "Promtail|promtail|OBS"
+  )
+  for line in "${ICHECKS[@]}"; do
+    name="${line%%|*}"; cn="${line#*|}"; cond="${cn#*|}"; cn="${cn%%|*}"
+    case "$cond" in
+      "") : ;;
+      OBS) [ "$LOGGING_STACK" = "1" ] || continue ;;
+      *) case "$SEEN" in *" $cond "*) : ;; *) continue ;; esac ;;
+    esac
+    if ! docker inspect "$cn" >/dev/null 2>&1; then
+      printf "     [ FEHLT] %-16s (kein Container)\n" "$name"; continue
+    fi
+    st="$(docker inspect -f '{{.State.Status}}' "$cn" 2>/dev/null)"
+    hs="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cn" 2>/dev/null)"
+    if [ "$st" = "running" ] && { [ -z "$hs" ] || [ "$hs" = "healthy" ]; }; then
+      printf "     [ OK   ] %-16s (%s%s)\n" "$name" "$st" "${hs:+/$hs}"
+    else
+      printf "     [ PRUEF] %-16s (%s%s) -> docker logs --tail=40 %s\n" "$name" "$st" "${hs:+/$hs}" "$cn"
+    fi
+  done
+}
+
 echo "================================================================"
 echo ">> Abschluss-Pruefung"
 check_containers
 check_all
+check_internal
 
 echo "================================================================"
 echo ">> Endzustand RAGFlow:"
