@@ -136,6 +136,74 @@ services:
         aliases:
           - vllm-main
 
+  # ===================== 1d) HAUPT-LLM D: NEMOTRON 3.5 LIGHTNING (NVFP4) ====
+  #  Hybrides Mamba-MoE (30B total / 3B aktiv), 1M Kontext moeglich, NVFP4-W4A16
+  #  + FP8-KV. Speculative Decoding per DSpark-Draft (eigener Checkpoint).
+  #  Auswahl in der .env:  COMPOSE_PROFILES=main-nemotron
+  #  Per Netzwerk-Alias "vllm-main:5568" + served-model-name "main" erreichbar
+  #  -> Agent/OWUI/RAGFlow brauchen KEINE Aenderung.
+  #
+  #  Alle Flags stammen 1:1 aus der OFFIZIELLEN vLLM-Recipe (vllm-project/recipes,
+  #  models/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16.yaml, Variante "NVFP4"):
+  #    base_args   : --mamba-backend flashinfer --mamba-cache-mode align
+  #                  --enable-prefix-caching --max-num-batched-tokens 16384
+  #    NVFP4       : --kv-cache-dtype fp8 (= fp8_e4m3) --moe-backend marlin
+  #    reasoning   : --reasoning-parser nemotron_v3
+  #    tool calling: --enable-auto-tool-choice --tool-call-parser qwen3_xml
+  #    DSpark      : --speculative-config {"method":"dspark", ...DSpark, 3 Tokens}
+  #  Die Recipe verlangt vLLM >= 0.27.1 -> VLLM_IMAGE in der .env entsprechend setzen.
+  #  Kein --trust-remote-code noetig (native Unterstuetzung ab 0.27.1) -> laesst den
+  #  Ausfuehrungspfad fuer fremden Repo-Code bewusst zu.
+  vllm-main-nemotron:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1}
+    container_name: vllm_main_nemotron
+    profiles: ["main-nemotron"]
+    restart: unless-stopped
+    ipc: host
+    shm_size: "16gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "5568:5568"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      # Falls das Modell auf SM120 Muell liefert (der Sanity-Check in start.sh meldet
+      # es): als ERSTEN Hebel DeepGEMM abschalten -> VLLM_USE_DEEP_GEMM=0.
+      # - VLLM_USE_DEEP_GEMM=0
+      # - HF_HUB_OFFLINE=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+      --served-model-name nemotron-main main
+      --host 0.0.0.0
+      --port 5568
+      --max-model-len "${NEMOTRON_MAX_LEN:-260000}"
+      --kv-cache-dtype fp8
+      --moe-backend marlin
+      --mamba-backend flashinfer
+      --mamba-cache-mode align
+      --enable-prefix-caching
+      --max-num-batched-tokens 16384
+      --max-num-seqs 2
+      --gpu-memory-utilization ${NEMOTRON_GPU_UTIL:-0.40}
+      --reasoning-parser nemotron_v3
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_xml
+      --speculative-config '{"method":"dspark","model":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark","num_speculative_tokens":${NEMOTRON_SPEC_TOKENS:-3}}'
+    networks:
+      aistack-core:
+        aliases:
+          - vllm-main
+
   # ===================== 1b) HAUPT-LLM B: GEMMA-DIFFUSION (NVFP4, SM120) ====
   #  ALTERNATIVE zu (1a). Auswahl in der .env:  COMPOSE_PROFILES=main-gemma
   #  Diffusions-LLM (nicht-autoregressiv) -> bewusst NUR die vom Modell
@@ -636,9 +704,13 @@ services:
 
   # ===================== 9) OPEN WEBUI (Frontend) ===========================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:0.9.6 # letzter Patch der 0.9.x-Linie (08/2026).
-    # BEWUSST kein 0.10/0.11-Major: Volltext-/Filter-/Task-Model-Kette haengt an 0.9.x-
-    # Verhalten; vor einem Major-Bump webui.db sichern (Migration, kein Downgrade).
+    image: ghcr.io/open-webui/open-webui:0.11.0 # aktuelle stabile Version (08/2026).
+    # Changelog 0.9.6->0.11.0 geprueft: KEINE Brueche an unserer Kette (Filter-inlet/
+    # outlet bleibt und wird erweitert, externe OpenAI-Modelle + TASK_MODEL_EXTERNAL
+    # unveraendert, RAG-Template/resource-id unveraendert). Enthaelt Security-Fixes
+    # (Tool-Server-Permission-Enforcement, Collection-Name-Validierung, Code-
+    # Interpreter-Permission auf dem Legacy-Pfad). ACHTUNG: webui.db wird beim ersten
+    # Start migriert -> KEIN Downgrade; vorher Volume sichern.
     container_name: open-webui
     restart: unless-stopped
     ports:

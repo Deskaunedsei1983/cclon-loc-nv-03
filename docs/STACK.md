@@ -35,6 +35,7 @@ Ein **komplett selbst-enthaltenes**, lokales AI-Bundle nahe an claude.ai
 
 | Dienst | Image | Port (Host) | Profil | Funktion |
 |---|---|---|---|---|
+| `vllm-main-nemotron` | vllm-openai | 5568 | `main-nemotron` | **Haupt-LLM (empfohlen)** Nemotron-3.5-Lightning-30B-A3B-NVFP4 **+ DSpark** |
 | `vllm-main` | vllm-openai | 5568 | `main-qwen` | Haupt-LLM Qwen3.6-35B-A3B-NVFP4 **+ MTP** |
 | `vllm-main-qwen-plain` | vllm-openai | 5568 | `main-qwen-plain` | dasselbe **ohne** MTP (sauberes Structured Output) |
 | `vllm-main-gemma` | vllm-openai | 5568 | `main-gemma` | DiffusionGemma-26B-A4B-IT-NVFP4 |
@@ -68,6 +69,7 @@ Alle drei hängen am **Alias `vllm-main:5568`** und liefern die ID **`main`**.
 
 | Profil | Modell | Besonderheit | Gut für |
 |---|---|---|---|
+| `main-nemotron` | Nemotron-3.5-Lightning-30B-A3B-NVFP4 | hybrides **Mamba-MoE** (30B/3B aktiv), **DSpark**-Speculative-Decoding (3 Tokens, eigener Draft-Checkpoint), `--moe-backend marlin`, `--mamba-backend flashinfer`, `--reasoning-parser nemotron_v3`, Tools `qwen3_xml`, 260k (Modell kann 1M), KV fp8_e4m3 | **Default** — braucht vLLM ≥ 0.27.1 |
 | `main-qwen` | Qwen3.6-35B-A3B-NVFP4 | **MTP** Speculative Decoding, `--reasoning-parser qwen3`, Tools `qwen3_coder`, 256k, KV fp8 | schnellstes Chat |
 | `main-qwen-plain` | dito | **ohne** MTP | **sauberes Structured Output** (mem0 `infer=true`) — MTP × guided decoding erzeugt sonst kaputtes JSON |
 | `main-gemma` | DiffusionGemma-26B-A4B-IT-NVFP4 | `VLLM_USE_V2_MODEL_RUNNER=1`, `--attention-backend TRITON_ATTN`, gemma4-Parser, `--default-chat-template-kwargs enable_thinking=true`, 256k | Diffusions-LLM, multimodal; **kein** garantiertes Structured Output |
@@ -211,7 +213,7 @@ Dashboard „AI-Stack — Container-Logs & Fehler" zeigt u. a. den Websuche-Pfad
 
 | `COMPOSE_PROFILES`-Wert | startet |
 |---|---|
-| `main-qwen` / `main-qwen-plain` / `main-gemma` | das jeweilige Hauptmodell (genau eines) |
+| `main-nemotron` / `main-qwen` / `main-qwen-plain` / `main-gemma` | das jeweilige Hauptmodell (genau eines) |
 | `helper` | GPU-Task-Helfer (optional) |
 | `mem0struct` | CPU-Struct-Helfer (mem0 + OWUI-Tasks) — **empfohlen** |
 | `blocklist` | Auto-Blocklist-Sidecar |

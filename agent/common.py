@@ -439,22 +439,41 @@ def owui_real_query(content: str) -> str:
     return c
 
 
+# Token-Budget fuer den Task-Passthrough. WICHTIG bei Reasoning-Modellen (Nemotron
+# nemotron_v3, Qwen qwen3): der Denkprozess zaehlt MIT auf max_tokens — ist das Budget
+# zu klein, frisst das Reasoning es auf und 'content' kommt LEER zurueck (dann haette
+# OWUI keinen Titel/keine Suchquery). Darum grosszuegig + per ENV justierbar.
+TASK_MAX_TOKENS = int(os.environ.get("TASK_MAX_TOKENS", "4096"))
+
+
 async def simple_completion(messages: list[dict], temperature: float = 0.3,
-                            max_tokens: int = 1024) -> str:
+                            max_tokens: int | None = None) -> str:
     """Genau EIN LLM-Durchlauf ohne Agent-Pipeline (kein RAG/Web/Code/Critic).
     Fuer OWUI-Hintergrundtasks: die Task-Nachrichten enthalten ihr Ausgabeformat
-    (z.B. JSON fuer die Query-Generierung) bereits selbst -> 1:1 ans Hauptmodell."""
+    (z.B. JSON fuer die Query-Generierung) bereits selbst -> 1:1 ans Hauptmodell.
+    Denk-Modus wird abgeschaltet, wo das Modell das unterstuetzt (spart Tokens/Zeit;
+    unbekannte chat_template_kwargs ignorieren die Server stillschweigend)."""
     payload = {"model": LLM_MODEL, "messages": messages,
-               "temperature": temperature, "max_tokens": max_tokens, "stream": False}
+               "temperature": temperature,
+               "max_tokens": max_tokens or TASK_MAX_TOKENS, "stream": False,
+               "chat_template_kwargs": {"enable_thinking": False}}
     try:
         async with httpx.AsyncClient() as http:
             r = await http.post(LLM_BASE_URL.rstrip("/") + "/chat/completions",
                                 json=payload,
                                 headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-                                timeout=60.0)
+                                timeout=120.0)
             r.raise_for_status()
             data = r.json()
-            return ((data.get("choices") or [{}])[0].get("message") or {}).get("content", "") or ""
+            msg = (data.get("choices") or [{}])[0].get("message") or {}
+            content = msg.get("content") or ""
+            if not content.strip():
+                # Reasoning-Modell hat nur gedacht, aber nichts geantwortet.
+                log.warning("OWUI-Task: leerer content (finish_reason=%s) — Reasoning hat "
+                            "das Budget von %d Tokens aufgebraucht? TASK_MAX_TOKENS erhoehen.",
+                            (data.get("choices") or [{}])[0].get("finish_reason"),
+                            max_tokens or TASK_MAX_TOKENS)
+            return content
     except Exception as e:
         log.warning("OWUI-Task-Passthrough (simple_completion) fehlgeschlagen: %s", e)
         return ""
