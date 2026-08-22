@@ -200,6 +200,34 @@ case "$SEEN" in *" helper "*)     echo "     GPU-Helfer  : Qwen/Qwen3.5-4B      
 case "$SEEN" in *" morphik "*)    echo "     ColPali     : tsystems/colqwen2.5-3b-multilingual (in morphik)                  [GPU, ~7-8 GB]" ;; esac
 echo "     (OWUI nutzt fuer Chat-Uploads zusaetzlich sein eingebautes all-MiniLM-L6-v2 auf CPU)"
 
+# --- Profile ohne fertigen Build-Kontext AUSSORTIEREN -----------------------
+#  'docker compose up --build' bricht bei EINEM fehlgeschlagenen Build komplett ab
+#  -> dann startet auch der Kernstack nicht. Beispiel: das fragments-Profil baut aus
+#  ./fragments/app, wohin das E2B-Repo erst geklont werden muss (fragments/README.md);
+#  ohne Klon fehlt package.json und 'npm install' scheitert. Solche Profile werden
+#  hier VORAB entfernt, statt den ganzen Start zu reissen.
+_profile_ready() {  # _profile_ready <profil> -> 0 = startbereit
+  case "$1" in
+    fragments)
+      if [ -f fragments/app/package.json ]; then return 0; fi
+      echo "   ! Profil 'fragments' uebersprungen: fragments/app/package.json fehlt."
+      echo "     Einrichten:  cd fragments && git clone https://github.com/e2b-dev/fragments app"
+      echo "                  cp Dockerfile app/Dockerfile   (siehe fragments/README.md)"
+      return 1 ;;
+    microvm)
+      [ -f microsandbox-executor/Dockerfile ] && return 0
+      echo "   ! Profil 'microvm' uebersprungen: microsandbox-executor/Dockerfile fehlt."; return 1 ;;
+    *) return 0 ;;
+  esac
+}
+_KEPT=(); _KEPT_SEEN=" "
+for p in ${SEEN}; do
+  if _profile_ready "$p"; then _KEPT+=("$p"); _KEPT_SEEN="$_KEPT_SEEN$p "; fi
+done
+PROFILE_ARGS=()
+for p in "${_KEPT[@]:-}"; do [ -n "$p" ] && PROFILE_ARGS+=(--profile "$p"); done
+SEEN="$_KEPT_SEEN"
+
 dc() { docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" "${PROFILE_ARGS[@]}" "$@"; }
 main_up() { dc up -d --build; }
 
@@ -309,7 +337,14 @@ if [ "$SERIAL_GPU_LOAD" = "1" ]; then
   echo ">> GPU-Modelle geladen -> jetzt den Rest (morphik/ColPali laedt nun allein)"
 fi
 
-retry 3 main_up
+if ! retry 3 main_up; then
+  echo "   !! Voller Start fehlgeschlagen (meist EIN kaputter Build/Pull)."
+  echo "   -> Rettungsversuch: Kernstack OHNE optionale Profile starten,"
+  echo "      damit der Stack trotzdem nutzbar ist."
+  docker compose "${COMPOSE_FILES[@]}" "${MAIN_PROFILE_ARGS[@]}" up -d 2>&1 || true
+  echo "   -> Danach die Ursache oben suchen (Stichwort 'failed to solve'/'not found')"
+  echo "      und das betroffene Profil gezielt nachziehen."
+fi
 
 # --- Sanity-Check Hauptmodell: erst auf Bereitschaft warten, dann 1 Testanfrage ---
 #  Deckt beide Modi ab: seriell (Main laengst oben -> wait_health kehrt sofort zurueck)

@@ -758,7 +758,11 @@ services:
   fragments:
     profiles: ["fragments"]
     build:
-      context: ./fragments # Repo dorthin klonen, siehe ./fragments/README.md
+      # Das E2B-Repo wird nach ./fragments/app geklont (siehe fragments/README.md) —
+      # DORT liegen package.json/Quellen, also ist app/ der Build-Kontext.
+      # Ohne Klon existiert kein package.json -> Build scheitert (start.sh prueft das
+      # vorab und ueberspringt das Profil, statt den ganzen Start zu reissen).
+      context: ./fragments/app
     image: fragments:local
     container_name: fragments
     restart: unless-stopped
