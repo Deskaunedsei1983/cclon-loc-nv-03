@@ -91,9 +91,8 @@ class Filter:
                         "Grosse Dateien werden von hier gelesen statt base64 transportiert.")
         sandbox_path: str = Field(
             default="/home/sandbox/work",
-            description="Derselbe Ordner AUS SICHT der Sandbox. Wird gebraucht, um "
-                        "den Datei-Browser (rechte Seitenleiste) auf die neue Datei "
-                        "zu schicken — der spricht Sandbox-Pfade.")
+            description="Derselbe Ordner AUS SICHT der Sandbox (nur noch informativ — "
+                        "der Datei-Browser bekommt virtuelle Pfade, '/' = Chat-Ordner).")
         open_file_nav: bool = Field(
             default=True,
             description="Nach der Antwort den Datei-Browser oeffnen und die zuletzt "
@@ -197,9 +196,13 @@ class Filter:
                     if not (p == root or p.startswith(root + os.sep)):
                         log.warning("sandbox_files: Pfad ausserhalb %s abgelehnt: %s", root, p)
                         continue
-                    # Denselben Pfad aus Sicht der SANDBOX merken — der
-                    # Datei-Browser spricht Sandbox-Pfade, nicht Mount-Pfade.
-                    cur_sandbox_path = self.valves.sandbox_path.rstrip("/") + p[len(root):]
+                    # Pfad fuer den Datei-Browser merken. Der spricht VIRTUELLE
+                    # Pfade: '/' ist der Ordner dieses Chats. Aus
+                    # /sandbox-work/chat_<id>/unterordner/datei wird also
+                    # /unterordner/datei.
+                    rel = p[len(root):].lstrip("/")          # chat_<id>/...
+                    parts = rel.split("/", 1)
+                    cur_sandbox_path = "/" + (parts[1] if len(parts) == 2 else parts[0])
                     try:
                         if os.path.getsize(p) > limit:
                             log.warning("sandbox_files: '%s' > %d MB -> uebersprungen",

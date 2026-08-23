@@ -336,11 +336,18 @@ def artifact_hint(name: str) -> str:
                   "neue Datei daraus neu aufbauen und das im Ergebnis erwaehnen")
     return (
         f"ARTEFAKT-AUFTRAG: '{name}' ist {kind} und {quelle}. "
-        f"Soll die Datei geaendert/verbessert/neu erstellt werden: IMMER per "
-        f"'run_code' eine NEUE Datei schreiben (Vorschlag: '{ziel}'), das "
-        f"Original nicht ueberschreiben. In die Antwort gehoert NUR eine kurze "
-        f"Aenderungsliste plus der Dateiname — den Dateiinhalt NICHT in die "
-        f"Antwort kopieren."
+        f"BEZIEHT sich die aktuelle Anfrage auf diese Datei (aendern, verbessern, "
+        f"pruefen, erweitern): per 'run_code' eine NEUE Datei schreiben "
+        f"(Vorschlag: '{ziel}'), das Original nicht ueberschreiben. "
+        f"Verlangt die Anfrage dagegen etwas EIGENSTAENDIGES ('schreibe ein neues/"
+        f"komplexes Notebook', 'erstelle ein Skript fuer ...'), dann die "
+        f"hochgeladene Datei NICHT umbauen und NICHT als Grundgeruest verwenden — "
+        f"das Ergebnis von Grund auf neu erzeugen und unter einem eigenen, "
+        f"sprechenden Namen speichern (OHNE '{stem}' im Namen). Die hochgeladene "
+        f"Datei haengt in OWUI an JEDER Nachricht des Chats, auch wenn sie mit der "
+        f"aktuellen Frage nichts zu tun hat. "
+        f"In die Antwort gehoert NUR eine kurze Aenderungsliste plus der Dateiname "
+        f"— den Dateiinhalt NICHT in die Antwort kopieren."
     )
 
 
@@ -1038,7 +1045,10 @@ async def _put_into_chat_folder(http: httpx.AsyncClient, name: str, data: bytes)
                         params={"directory": "/"}, headers=headers,
                         files={"file": (name, data)}, timeout=180.0)
     r.raise_for_status()
-    return r.json().get("path", "")
+    j = r.json()
+    # 'path' ist der VIRTUELLE Pfad fuer OWUIs Datei-Browser ('/name'); der
+    # Agent braucht den echten Volume-Pfad, um ihn OWUI zum Lesen zu melden.
+    return j.get("real_path") or j.get("path", "")
 
 
 async def _mirror_to_chat_folder(http: httpx.AsyncClient, chat_id: str, files: list) -> dict:

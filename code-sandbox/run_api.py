@@ -95,44 +95,64 @@ def _inside(child: pathlib.Path, parent: pathlib.Path) -> bool:
     return child == parent or str(child).startswith(str(parent) + os.sep)
 
 
+def _virt(real: pathlib.Path, root: pathlib.Path) -> str:
+    """Realer Pfad -> VIRTUELLER Pfad. '/' ist immer der Ordner DIESES Chats."""
+    if real == root:
+        return "/"
+    try:
+        return "/" + str(real.relative_to(root))
+    except ValueError:
+        return "/"
+
+
 def _resolve(session_id: str | None, raw: str | None, *, must_exist: bool = False,
              scope: str = "session") -> pathlib.Path:
-    """Einen vom Client gelieferten Pfad aufloesen und haerten.
+    """Virtuellen Client-Pfad in einen realen Pfad im Chat-Ordner aufloesen.
 
-    scope steuert, wie streng geprueft wird:
-      'session' — muss IM Chat-Ordner liegen (alles Schreibende)
-      'volume'  — irgendwo unterhalb des Sandbox-Volumes (Lesen/Download;
-                  der Pfad stammt ohnehin aus einer vorherigen Auflistung)
-      'clamp'   — ausserhalb des Chat-Ordners? Dann still auf den Chat-Ordner
-                  zurueckfallen statt 403.
+    Die API spricht nach aussen NUR virtuelle Pfade: '/' ist der Ordner dieses
+    Chats, '/bericht.csv' eine Datei darin. Damit kann OWUIs Datei-Browser den
+    Ordner gar nicht erst verlassen — es gibt keinen Namen fuer 'ausserhalb'.
+    Das ist wichtig, weil FileNav.svelte den zuletzt betrachteten Pfad MODULWEIT
+    speichert (`<script context="module"> let savedPath`) und ihn ueber
+    Chatwechsel hinweg mitschleppt ("persist the current browsed path as the new
+    session's cwd — don't re-fetch"). Frueher landete der Browser damit im
+    Volume-Wurzelverzeichnis /home/sandbox/work.
 
-    'clamp' ist noetig, weil OWUIs FileNav den zuletzt betrachteten Pfad
-    MODULWEIT speichert (`let savedPath` in FileNav.svelte) und ihn beim
-    Anlegen eines Chats mit der NEUEN Chat-ID weiterreicht
-    ("Chat just got created (null -> real ID): persist the current browsed
-    path as the new session's cwd — don't re-fetch"). Der Pfad gehoert dann
-    noch zum vorigen Chat. Ein 403 waere hier eine Sackgasse; wir schwenken
-    stattdessen auf den richtigen Ordner.
+    Alte absolute Container-Pfade werden noch akzeptiert (Prefix wird
+    abgeschnitten), damit ein Browser-Tab mit altem Zustand nicht haengen bleibt.
+
+    scope:
+      'session' — muss im Chat-Ordner liegen, sonst 403 (alles Schreibende)
+      'clamp'   — ausserhalb? Dann still auf den Chat-Ordner zurueckfallen
+                  (Auflisten und cwd — dort waere ein 403 nur eine Sackgasse)
     """
     volume = pathlib.Path(os.path.realpath(WORK))
     root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     p = (raw or "").strip()
-    if not p or p in ("/", ".", "./"):
-        target = root
+    # Alt-Client: absoluter Container-Pfad -> auf den virtuellen Anteil kuerzen.
+    for prefix in (str(root), str(volume)):
+        if p == prefix:
+            p = ""
+            break
+        if p.startswith(prefix + os.sep):
+            p = p[len(prefix) + 1:]
+            break
+    p = p.strip().lstrip("/")
+    if p in ("", ".", "./"):
+        real = root
     else:
-        cand = pathlib.Path(p)
-        target = cand if cand.is_absolute() else (root / p)
-    real = pathlib.Path(os.path.realpath(target))
+        real = pathlib.Path(os.path.realpath(root / p))
 
-    if not _inside(real, volume):
-        raise HTTPException(status_code=403, detail="Pfad ausserhalb des Sandbox-Volumes")
-    if scope != "volume" and not _inside(real, root):
-        if scope == "clamp":
-            real = root
-        else:
+    if not _inside(real, root):
+        if scope != "clamp":
             raise HTTPException(status_code=403, detail="Pfad ausserhalb des Chat-Ordners")
+        real = root
     if must_exist and not real.exists():
-        raise HTTPException(status_code=404, detail="Nicht gefunden")
+        if scope != "clamp":
+            raise HTTPException(status_code=404, detail="Nicht gefunden")
+        # Auflisten darf nie in einer Sackgasse enden: ein Pfad aus einem
+        # frueheren Chat existiert hier schlicht nicht -> Chat-Ordner zeigen.
+        real = root
     return real
 
 
@@ -148,9 +168,18 @@ def _auth(request: Request) -> str:
     return (request.headers.get("x-session-id") or "").strip()
 
 
+#  Nicht anzeigen: Arbeitsdateien, die der Nutzer nicht erzeugt hat.
+#  'document.txt' ist die Textfassung des Uploads, die der Agent fuer den
+#  Volltext-Modus in den Ordner schreibt — die ORIGINALDATEI liegt unter ihrem
+#  echten Namen daneben, die Textfassung ist im Browser nur Rauschen.
+HIDDEN_NAMES = {n.strip() for n in
+                os.environ.get("SANDBOX_HIDE_NAMES", "document.txt,__pycache__").split(",")
+                if n.strip()}
+
+
 def _visible(p: pathlib.Path) -> bool:
-    """Interne Dateien (.snippet_*.py, __pycache__, ...) nicht anzeigen."""
-    return not p.name.startswith(".") and p.name != "__pycache__"
+    """Interne Dateien (.snippet_*.py, document.txt, __pycache__) nicht anzeigen."""
+    return not p.name.startswith(".") and p.name not in HIDDEN_NAMES
 
 
 def _entry(p: pathlib.Path) -> dict:
@@ -282,41 +311,41 @@ class CwdReq(BaseModel):
 
 @app.get("/files/cwd", include_in_schema=False)
 async def files_cwd(session_id: str = Depends(_auth)):
-    root = _chat_dir(session_id)
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     saved = _CWD.get(session_id or "")
-    cwd = saved if saved and saved.startswith(str(root)) and os.path.isdir(saved) else str(root)
-    return {
-        "cwd": cwd,
-        "home": str(root),
-        "root": {"path": str(root), "label": "Chat-Dateien"},
-    }
+    cwd = saved if saved and os.path.isdir(root / saved.lstrip("/")) else "/"
+    # root.path='/' -> FileNav kann nicht hoeher navigieren als in diesen Chat.
+    return {"cwd": cwd, "home": "/", "root": {"path": "/", "label": "Chat-Dateien"}}
 
 
 @app.post("/files/cwd", include_in_schema=False)
 async def files_setcwd(req: CwdReq, session_id: str = Depends(_auth)):
     # clamp: FileNav schiebt beim Anlegen eines Chats den Pfad des VORIGEN
     # Chats herueber — der landet dann still im richtigen Ordner.
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     target = _resolve(session_id, req.path, scope="clamp")
-    if target.is_dir():
-        _CWD[session_id or ""] = str(target)
-    return {"cwd": str(target)}
+    # Zeigt der Pfad ins Leere (Ordner eines anderen Chats, geloeschter Ordner),
+    # NICHT den alten Stand behalten, sondern sauber auf den Chat-Ordner setzen.
+    cwd = _virt(target, root) if target.is_dir() else "/"
+    _CWD[session_id or ""] = cwd
+    return {"cwd": cwd}
 
 
 @app.get("/files/list", include_in_schema=False)
 async def files_list(directory: str = "/", session_id: str = Depends(_auth)):
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     target = _resolve(session_id, directory, must_exist=True, scope="clamp")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail="Kein Verzeichnis")
     entries = [_entry(p) for p in target.iterdir() if _visible(p)]
     entries.sort(key=lambda e: (e["type"] != "directory", e["name"].lower()))
-    return {"path": str(target), "entries": entries}
+    return {"path": _virt(target, root), "entries": entries}
 
 
 @app.get("/files/read", include_in_schema=False)
 async def files_read(path: str, session_id: str = Depends(_auth)):
-    # 'volume': der Pfad stammt aus einer vorherigen Auflistung; ein 403 nach
-    # einem Chatwechsel waere nur eine Sackgasse. Schreiben bleibt Chat-lokal.
-    target = _resolve(session_id, path, must_exist=True, scope="volume")
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    target = _resolve(session_id, path, must_exist=True)
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Ist ein Verzeichnis")
     if target.stat().st_size > READ_MAX_BYTES:
@@ -327,12 +356,12 @@ async def files_read(path: str, session_id: str = Depends(_auth)):
     except UnicodeDecodeError:
         # OWUI erkennt Binaerdateien am Content-Type und zeigt einen Platzhalter.
         return Response(content=b"", media_type="application/octet-stream")
-    return {"path": str(target), "total_lines": text.count("\n") + 1, "content": text}
+    return {"path": _virt(target, root), "total_lines": text.count("\n") + 1, "content": text}
 
 
 @app.get("/files/view", include_in_schema=False)
 async def files_view(path: str, session_id: str = Depends(_auth)):
-    target = _resolve(session_id, path, must_exist=True, scope="volume")
+    target = _resolve(session_id, path, must_exist=True)
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Ist ein Verzeichnis")
     size = target.stat().st_size
@@ -359,7 +388,7 @@ async def files_archive(req: ArchiveReq, session_id: str = Depends(_auth)):
     """Mehrere Dateien/Ordner als ZIP — so laedt man in OWUI eine Auswahl auf
     einmal herunter (der Grund, warum viele Dateien in einem Chat frueher
     unuebersichtlich waren)."""
-    targets = [_resolve(session_id, p, must_exist=True, scope="volume") for p in (req.paths or [])]
+    targets = [_resolve(session_id, p, must_exist=True) for p in (req.paths or [])]
     if not targets:
         raise HTTPException(status_code=400, detail="Keine Pfade")
     buf = io.BytesIO()
@@ -383,6 +412,7 @@ async def files_archive(req: ArchiveReq, session_id: str = Depends(_auth)):
 @app.post("/files/upload", include_in_schema=False)
 async def files_upload(directory: str = "/", file: UploadFile = File(...),
                        session_id: str = Depends(_auth)):
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     target_dir = _resolve(session_id, directory, must_exist=True)
     if not target_dir.is_dir():
         raise HTTPException(status_code=400, detail="Kein Verzeichnis")
@@ -397,7 +427,8 @@ async def files_upload(directory: str = "/", file: UploadFile = File(...),
                 dest.unlink(missing_ok=True)
                 raise HTTPException(status_code=413, detail="Datei zu gross")
             fh.write(chunk)
-    return {"path": str(dest), "size": size}
+    # real_path: fuer den Agenten (Volume-Pfad), path: virtuell fuer FileNav.
+    return {"path": _virt(dest, root), "real_path": str(dest), "size": size}
 
 
 class PathReq(BaseModel):
@@ -406,21 +437,23 @@ class PathReq(BaseModel):
 
 @app.post("/files/mkdir", include_in_schema=False)
 async def files_mkdir(req: PathReq, session_id: str = Depends(_auth)):
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     target = _resolve(session_id, req.path)
     target.mkdir(parents=True, exist_ok=True)
-    return {"path": str(target)}
+    return {"path": _virt(target, root)}
 
 
 @app.delete("/files/delete", include_in_schema=False)
 async def files_delete(path: str, session_id: str = Depends(_auth)):
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     target = _resolve(session_id, path, must_exist=True)
-    if target == _resolve(session_id, "/"):
+    if target == root:
         raise HTTPException(status_code=400, detail="Der Chat-Ordner selbst wird nicht geloescht")
     if target.is_dir():
         shutil.rmtree(target)
-        return {"path": str(target), "type": "directory"}
+        return {"path": _virt(target, root), "type": "directory"}
     target.unlink()
-    return {"path": str(target), "type": "file"}
+    return {"path": _virt(target, root), "type": "file"}
 
 
 class MoveReq(BaseModel):
@@ -430,13 +463,14 @@ class MoveReq(BaseModel):
 
 @app.post("/files/move", include_in_schema=False)
 async def files_move(req: MoveReq, session_id: str = Depends(_auth)):
+    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     src = _resolve(session_id, req.source, must_exist=True)
     dst = _resolve(session_id, req.destination)
     if dst.is_dir():
         dst = dst / src.name
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
-    return {"source": str(src), "destination": str(dst)}
+    return {"source": _virt(src, root), "destination": _virt(dst, root)}
 
 
 @app.get("/ports", include_in_schema=False)

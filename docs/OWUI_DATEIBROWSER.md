@@ -58,13 +58,37 @@ Mehrfachauswahl → ZIP.
 gegen diesen Ordner. Ein Chat sieht also **nur seine eigenen Dateien** —
 genau das „alle Dateien eines Chats gesammelt“.
 
-Der Agent schickt dieselbe Chat-ID (`body.metadata.chat_id`) an `POST /run`, und
-die Sandbox führt den Code **in diesem Chat-Ordner** aus. Nebeneffekt: ein
-Folgelauf im selben Chat sieht die Dateien des vorherigen Laufs — iteratives
-Arbeiten (erzeugen → korrigieren → ergänzen) funktioniert damit erst richtig.
-Neu entstandene oder geänderte Dateien erkennt die Sandbox per Snapshot-Vergleich
-(vorher/nachher), das Skript selbst liegt versteckt als `.snippet_<id>.py` und
-wird nach dem Lauf gelöscht.
+Der Agent schickt dieselbe Chat-ID an `POST /run` (er bekommt sie als Header,
+siehe unten), und die Sandbox führt den Code **in diesem Chat-Ordner** aus.
+Nebeneffekt: ein Folgelauf im selben Chat sieht die Dateien des vorherigen Laufs
+— iteratives Arbeiten (erzeugen → korrigieren → ergänzen) funktioniert damit
+erst richtig. Neu entstandene oder geänderte Dateien erkennt die Sandbox per
+Snapshot-Vergleich (vorher/nachher), das Skript selbst liegt versteckt als
+`.snippet_<id>.py` und wird nach dem Lauf gelöscht.
+
+### Nach außen nur virtuelle Pfade
+
+Die Datei-API spricht nach außen **nur virtuelle Pfade**: `/` ist immer der
+Ordner *dieses* Chats, `/bericht.csv` eine Datei darin. Es gibt schlicht keinen
+Namen für „außerhalb“ — der Browser kann den Chat-Ordner also gar nicht
+verlassen, und ein Pfad aus einem anderen Chat ist nicht adressierbar.
+
+Das ist nötig, weil `FileNav.svelte` den zuletzt betrachteten Pfad **modulweit**
+speichert und über Chatwechsel hinweg mitschleppt. Mit echten Container-Pfaden
+landete der Browser dadurch im Volume-Wurzelverzeichnis und zeigte
+`/home/sandbox/work` samt allem, was dort lag — sichtbar am Breadcrumb, das in
+`buildBreadcrumbs()` den Zweig **ohne** `fileRoot` nimmt:
+
+```js
+const parts = path.split('/').filter(Boolean);   // → "/ home / sandbox / work"
+```
+
+Alte absolute Pfade werden weiterhin angenommen (der Präfix wird abgeschnitten),
+damit ein Browser-Tab mit altem Zustand nicht hängen bleibt.
+
+Zusätzlich blendet die API `document.txt` aus (`SANDBOX_HIDE_NAMES`) — das ist
+die Textfassung des Uploads für den Volltext-Modus, im Browser nur Rauschen;
+die Originaldatei liegt unter ihrem echten Namen daneben.
 
 ### Stale Pfade: warum es keine 403-Sackgasse gibt
 
@@ -90,13 +114,10 @@ POST /files/cwd                                            403 Forbidden
 
 Deshalb prüft `_resolve()` jetzt in drei Stufen:
 
-| Operation | Scope | Verhalten außerhalb des Chat-Ordners |
+| Operation | Scope | Verhalten bei einem Pfad außerhalb des Chat-Ordners |
 |---|---|---|
-| `list`, `POST cwd` | `clamp` | schwenkt still auf den Chat-Ordner |
-| `read`, `view`, `archive` | `volume` | erlaubt (der Pfad stammt aus einer Auflistung) |
-| `upload`, `mkdir`, `move`, `delete` | `session` | **403** — Schreiben bleibt chat-lokal |
-
-Außerhalb des Sandbox-Volumes bleibt **alles** hart bei 403.
+| `list`, `POST cwd` | `clamp` | schwenkt still auf den Chat-Ordner (auch wenn der Pfad gar nicht existiert) |
+| alles andere | `session` | **403** bzw. **404** — es gibt nichts zu holen |
 
 ### Die Chat-ID kommt als HTTP-Header, nicht im Body
 
