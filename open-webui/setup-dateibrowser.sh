@@ -41,7 +41,7 @@ for cn in "$OWUI_CN" "$SBX_CN"; do
 done
 
 # --- 1) Token: .env gegen den TATSAECHLICH laufenden Container abgleichen -----
-echo ">> [1/5] Token abgleichen (.env <-> laufender code_sandbox)"
+echo ">> [1/6] Token abgleichen (.env <-> laufender code_sandbox)"
 ENV_TOKEN="${SANDBOX_FILES_TOKEN:-}"
 if [ -z "$ENV_TOKEN" ] && [ -f .env ]; then
   ENV_TOKEN="$(grep -E '^[[:space:]]*SANDBOX_FILES_TOKEN=' .env | tail -n1 | cut -d= -f2- | tr -d "\"' ")"
@@ -61,7 +61,7 @@ fi
 echo "   OK — $(mask "$ENV_TOKEN")"
 
 # --- 2) Laeuft die Datei-API ueberhaupt? -------------------------------------
-echo ">> [2/5] Datei-API im code_sandbox"
+echo ">> [2/6] Datei-API im code_sandbox"
 docker exec -e T="$ENV_TOKEN" "$SBX_CN" python3 - <<'PY' || fail "Datei-API antwortet nicht (siehe oben). Image neu bauen: docker compose up -d --build code-sandbox"
 import json, os, sys, urllib.request
 req = urllib.request.Request("http://127.0.0.1:8000/api/config",
@@ -79,7 +79,7 @@ print("   OK — features.terminal=false (Datei-Browser ja, Shell nein)")
 PY
 
 # --- 3) Kommt OWUI hin? (DNS + Netz + Auth) ----------------------------------
-echo ">> [3/5] Erreichbarkeit AUS dem OWUI-Container ($SRV_URL)"
+echo ">> [3/6] Erreichbarkeit AUS dem OWUI-Container ($SRV_URL)"
 docker exec -e T="$ENV_TOKEN" -e U="$SRV_URL" "$OWUI_CN" python3 - <<'PY' || fail "OWUI erreicht die Sandbox nicht (Details oben)."
 import json, os, socket, sys, urllib.request
 url = os.environ["U"].rstrip("/")
@@ -104,11 +104,80 @@ except Exception as e:
 print("   OK")
 PY
 
-# --- 4) Eintrag in OWUIs Config ----------------------------------------------
+# --- 4) Notebook-Kernel: Zellen ausfuehren ("Run"/"Run All" im .ipynb-Viewer) --
+echo ">> [4/6] Notebook-Kernel (Zellen ausfuehren im Datei-Browser)"
+docker exec -e T="$ENV_TOKEN" -e U="$SRV_URL" "$OWUI_CN" python3 - <<'PY' || \
+  fail "Notebook-Kernel antwortet nicht (Details oben).
+       Meist fehlt nur ein Neubau:  docker compose up -d --build code-sandbox"
+import json, os, sys, urllib.error, urllib.request
+
+BASE = os.environ["U"].rstrip("/")
+TOK = os.environ["T"]
+SITZUNG = "selbsttest"
+NB = json.dumps({"cells": [{"cell_type": "code", "source": ["print(21*2)\n"],
+                            "metadata": {}, "outputs": [], "execution_count": None}],
+                 "metadata": {}, "nbformat": 4, "nbformat_minor": 5}).encode()
+
+
+def ruf(pfad, daten=None, methode=None, sitzung=None, typ="application/json"):
+    kopf = {"Authorization": "Bearer " + TOK}
+    if sitzung:
+        kopf["X-Session-Id"] = sitzung
+    if daten is not None:
+        kopf["Content-Type"] = typ
+    r = urllib.request.Request(BASE + pfad, data=daten, headers=kopf, method=methode)
+    with urllib.request.urlopen(r, timeout=120) as resp:
+        roh = resp.read()
+    return json.loads(roh) if roh else {}
+
+
+# Testnotebook ablegen (multipart von Hand, damit keine Abhaengigkeit noetig ist)
+grenze = "----selbsttest"
+teil = (f"--{grenze}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="selbsttest.ipynb"\r\n'
+        "Content-Type: application/json\r\n\r\n").encode() + NB + f"\r\n--{grenze}--\r\n".encode()
+try:
+    ruf("/files/upload?directory=/", teil, "POST", SITZUNG,
+        f"multipart/form-data; boundary={grenze}")
+except Exception as e:
+    sys.exit(f"   Testnotebook nicht ablegbar: {e}")
+
+sid = None
+try:
+    # GENAU wie OWUI: createNotebookSession schickt KEINE Chat-ID mit.
+    s = ruf("/notebooks", json.dumps({"path": "/selbsttest.ipynb"}).encode(), "POST")
+    sid = s.get("id")
+    if not sid:
+        sys.exit(f"   unerwartete Antwort: {s}")
+    print(f"   Kernel gestartet ({s.get('kernel')})")
+    e = ruf(f"/notebooks/{sid}/execute",
+            json.dumps({"cell_index": 0, "source": "print(21*2)"}).encode(), "POST")
+    text = "".join(o.get("text", "") for o in e.get("outputs", []))
+    if "42" not in text:
+        sys.exit(f"   Zelle lief, aber ohne erwartete Ausgabe: {e}")
+    print("   OK — Zelle ausgefuehrt, Ausgabe korrekt (42)")
+except urllib.error.HTTPError as ex:
+    leib = ex.read()[:300].decode("utf-8", "replace")
+    sys.exit(f"   HTTP {ex.code}: {leib}\n"
+             "   404 'in keinem Chat-Ordner gefunden' -> altes Image ohne den Fallback\n"
+             "   501 'Kein Kernel verfuegbar'        -> ipykernel fehlt im Image\n"
+             "   -> docker compose up -d --build code-sandbox")
+except Exception as ex:
+    sys.exit(f"   {type(ex).__name__}: {ex}")
+finally:
+    try:
+        if sid:
+            ruf(f"/notebooks/{sid}", None, "DELETE")
+        ruf("/files/delete?path=/selbsttest.ipynb", None, "DELETE", SITZUNG)
+    except Exception:
+        pass
+PY
+
+# --- 5) Eintrag in OWUIs Config ----------------------------------------------
 if [ "$CHECK_ONLY" = "1" ]; then
-  echo ">> [4/5] Gespeicherte Terminal-Server (nur lesen)"
+  echo ">> [5/6] Gespeicherte Terminal-Server (nur lesen)"
 else
-  echo ">> [4/5] Terminal-Server in die OWUI-Config schreiben"
+  echo ">> [5/6] Terminal-Server in die OWUI-Config schreiben"
 fi
 docker exec -e ID="$SRV_ID" -e NAME="$SRV_NAME" -e URL="$SRV_URL" -e T="$ENV_TOKEN" \
             -e RO="$CHECK_ONLY" "$OWUI_CN" python3 - <<'PY' || fail "Config-Schreiben fehlgeschlagen."
@@ -169,9 +238,9 @@ PY
 
 # --- 5) Neustart --------------------------------------------------------------
 if [ "$CHECK_ONLY" = "1" ]; then
-  echo ">> [5/5] --check: OWUI wird nicht neu gestartet"
+  echo ">> [6/6] --check: OWUI wird nicht neu gestartet"
 else
-  echo ">> [5/5] OWUI neu starten (Config wird beim Start gelesen)"
+  echo ">> [6/6] OWUI neu starten (Config wird beim Start gelesen)"
   docker restart "$OWUI_CN" >/dev/null
   echo "   OK"
 fi

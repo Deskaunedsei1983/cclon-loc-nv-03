@@ -216,6 +216,16 @@ Dahinter läuft ein echter IPython-Kernel (`jupyter_client.AsyncKernelManager`)
 kann also die Dateien ihres Chats lesen und neue schreiben — die tauchen sofort
 in der Liste auf. Der Kernel-Zustand bleibt zwischen Zellen erhalten.
 
+**Fallstrick, der es zunächst brach:** `createNotebookSession(baseUrl, apiKey,
+path)` hat — anders als **jede** `/files/*`-Funktion — **keinen session-Parameter**
+und schickt deshalb **kein `X-Session-Id`**. Ohne Chat-ID war die Wurzel der leere
+`.ohne_sitzung`-Ordner, das Notebook lag dort nicht, und jedes Ausführen endete
+mit 404. Der Dienst sucht die Datei jetzt ohne Chat-ID in **allen** Chat-Ordnern
+und nimmt den zuletzt geänderten Treffer; der Kernel läuft dann im richtigen
+Ordner. Prüfen lässt sich der ganze Weg mit
+`./open-webui/setup-dateibrowser.sh --check` (Schritt 4 legt ein Testnotebook ab,
+startet einen Kernel, führt `print(21*2)` aus und räumt wieder auf).
+
 Grenzen: `SANDBOX_NB_MAX_SESSIONS` (3) gleichzeitige Kernel,
 `SANDBOX_NB_CELL_TIMEOUT` (120 s) je Zelle — danach wird interrupt geschickt und
 ein `error`-Output geliefert statt zu hängen —, `SANDBOX_NB_IDLE_TIMEOUT`

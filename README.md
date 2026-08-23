@@ -88,9 +88,10 @@ COMPOSE_PROFILES=main-nemotron,mem0struct     # nvidia/NVIDIA-Nemotron-3.5-Light
   (`docker rm -f vllm_main vllm_main_qwen_plain vllm_main_nemotron`), dann `./start.sh`.
 
 **Nemotron-Stellschrauben** (`.env`): `NEMOTRON_MAX_LEN` (260000) ·
-`NEMOTRON_GPU_UTIL` (0.40) · `NEMOTRON_SPEC_TOKENS` (3) ·
-`NEMOTRON_MAX_SEQS` (4 — gleichzeitige Anfragen, der wirksamste Durchsatz-Hebel) ·
-`NEMOTRON_MAX_BATCHED_TOKENS` (16384). Messen: `./llm-bench.sh -p 4`,
+`NEMOTRON_GPU_UTIL` (0.40) · `NEMOTRON_SPEC_TOKENS` (4 — gemessen 60 % Akzeptanz bei 3) ·
+`NEMOTRON_MAX_SEQS` (4 — gleichzeitige Anfragen; **gemessen kein** Durchsatz-,
+sondern ein Latenz-Hebel: die GPU ist schon bei einer Anfrage gesättigt) ·
+`NEMOTRON_MAX_BATCHED_TOKENS` (16384). Messen: **`./llm-bench.sh -v`**,
 Verlauf im Grafana-Dashboard „AI-Stack — LLM-Leistung" (siehe `docs/LLM_LEISTUNG.md`).
 
 **vLLM-Version:** Nemotron 3.5 Lightning verlangt laut offizieller vLLM-Recipe
@@ -108,9 +109,9 @@ Neuere Tags: [hub.docker.com/r/vllm/vllm-openai/tags](https://hub.docker.com/r/v
 | Artifacts (HTML/SVG/JS) | OWUI Artifacts-Panel (HTML/JS/SVG, single-file React via CDN) |
 | Code-Ausführung/-Korrektur | OWUI Code-Interpreter → Jupyter-Sandbox (iteriert bei Fehlern); Agent → **Microsandbox-microVM** (hardware-isoliert) |
 | Skills / Office-Dateien | System-Prompt + Sandbox mit python-docx/openpyxl/python-pptx/reportlab |
-| Jupyter-Notebooks | nbformat in der Sandbox |
+| Jupyter-Notebooks | nbformat in der Sandbox; **Zellen im Datei-Browser ausführbar** (echter IPython-Kernel, Arbeitsverzeichnis = Chat-Ordner) |
 | Dateien lesen/verarbeiten | OWUI-Upload → Volltext-Modus + Sandbox-Workdir |
-| **Erzeugte Dateien herunterladen** | OWUI-Filter `sandbox_files.py`: Notebooks/CSV/XLSX/PDF aus der Sandbox erscheinen als **Download-Kacheln** in der Antwort |
+| **Erzeugte Dateien herunterladen** | Datei-Browser in der rechten Seitenleiste (Reiter *Files*), **pro Chat ein Ordner** — Vorschau, Download, ZIP (siehe `docs/OWUI_DATEIBROWSER.md`) |
 | Doku-Wissen (RAG) | **RAGFlow** (eingebettet) · optional Morphik (multimodal) |
 | Memory über Sitzungen | Mem0 + Qdrant |
 | Agentische RAG/Critic-Pipeline | research-agent (Whitelist-Tools, optional Critic-Loop) |

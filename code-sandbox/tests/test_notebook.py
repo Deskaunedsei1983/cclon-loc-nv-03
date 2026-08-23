@@ -24,6 +24,21 @@ nb = {"cells": [{"cell_type": "code", "source": ["print('hallo')\n"], "metadata"
 c.post("/files/upload", headers=H, params={"directory": "/"},
        files={"file": ("demo.ipynb", json.dumps(nb).encode())})
 
+# 0) DER FALL AUS DER PRAXIS: OWUIs createNotebookSession schickt KEINE Chat-ID
+#    (die Funktion hat schlicht keinen session-Parameter) -> ohne Fallback 404.
+HO = {"Authorization": "Bearer geheim123"}          # kein X-Session-Id
+r0 = c.post("/notebooks", headers=HO, json={"path": "/demo.ipynb"})
+check("ohne Chat-ID wird das Notebook gefunden", r0.status_code == 200, r0.text)
+if r0.status_code == 200:
+    sid0 = r0.json()["id"]
+    j0 = c.post(f"/notebooks/{sid0}/execute", headers=HO,
+                json={"cell_index": 0, "source": "import os; print(os.path.basename(os.getcwd()))"}).json()
+    check("Arbeitsverzeichnis ist der richtige Chat-Ordner",
+          any("chat-nb" in o.get("text", "") for o in j0["outputs"]), j0)
+    c.request("DELETE", f"/notebooks/{sid0}", headers=HO)
+check("unbekannter Name ohne Chat-ID -> 404",
+      c.post("/notebooks", headers=HO, json={"path": "/gibtsnicht.ipynb"}).status_code == 404)
+
 # 1) Sitzung anlegen
 r = c.post("/notebooks", headers=H, json={"path": "/demo.ipynb"})
 check("Kernel startet", r.status_code == 200 and r.json().get("status") == "ready", r.text)

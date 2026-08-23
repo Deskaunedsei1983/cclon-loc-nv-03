@@ -522,6 +522,48 @@ class NotebookReq(BaseModel):
     path: str
 
 
+def _find_notebook(session_id: str, raw: str) -> pathlib.Path:
+    """Notebook-Datei zu einem virtuellen Pfad finden.
+
+    Besonderheit: OWUIs Notebook-Endpunkte kennen die Chat-ID NICHT.
+    `createNotebookSession(baseUrl, apiKey, path)` hat schlicht keinen
+    session-Parameter — anders als jede /files/*-Funktion, die die Chat-ID als
+    X-Session-Id durchreicht. Ohne Header waere die Wurzel der leere
+    '.ohne_sitzung'-Ordner und jedes Ausfuehren scheiterte mit 404.
+
+    Darum: mit Chat-ID normal aufloesen, ohne Chat-ID den Namen in ALLEN
+    Chat-Ordnern suchen und den zuletzt geaenderten Treffer nehmen (es sind
+    ohnehin nur die eigenen Dateien desselben Nutzers; die Datei stammt aus
+    einer vorherigen Auflistung).
+    """
+    if (session_id or "").strip():
+        return _resolve(session_id, raw, must_exist=True)
+
+    volume = pathlib.Path(os.path.realpath(WORK))
+    rel = (raw or "").strip()
+    for prefix in (str(volume),):
+        if rel.startswith(prefix + os.sep):
+            rel = rel[len(prefix) + 1:]
+    rel = rel.strip().lstrip("/")
+    if not rel:
+        raise HTTPException(status_code=400, detail="Kein Pfad angegeben")
+
+    treffer = []
+    for d in volume.iterdir():
+        if not d.is_dir():
+            continue
+        p = pathlib.Path(os.path.realpath(d / rel))
+        if _inside(p, volume) and p.is_file():
+            try:
+                treffer.append((p.stat().st_mtime, p))
+            except OSError:
+                pass
+    if not treffer:
+        raise HTTPException(status_code=404,
+                            detail=f"'{rel}' in keinem Chat-Ordner gefunden")
+    return max(treffer)[1]
+
+
 class ExecReq(BaseModel):
     cell_index: int
     source: str | None = None
@@ -552,7 +594,7 @@ async def _nb_reap() -> None:
 @app.post("/notebooks", include_in_schema=False)
 async def nb_create(req: NotebookReq, session_id: str = Depends(_auth)):
     await _nb_reap()
-    target = _resolve(session_id, req.path, must_exist=True)
+    target = _find_notebook(session_id, req.path)
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Ist ein Verzeichnis")
     if len(_NB) >= NB_MAX_SESSIONS:
