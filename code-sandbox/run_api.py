@@ -14,7 +14,7 @@ Zwei Aufgaben:
    Neu entstandene/geaenderte Dateien werden erkannt (Snapshot-Vergleich)
    und - bis zu einer Groessengrenze - base64 zurueckgegeben.
 
-2) /files/*      — Datei-Browser fuer Open WebUI (rechte Seitenleiste).
+2) /files/*  + /notebooks/*  — Datei-Browser fuer Open WebUI (rechte Seitenleiste).
    OWUI 0.11 zeigt den Datei-Browser (ChatControls -> Reiter "Files",
    Komponente FileNav.svelte) nur fuer einen konfigurierten TERMINAL-SERVER.
    Dieser Dienst spielt genau diesen Terminal-Server — aber NUR den
@@ -22,6 +22,9 @@ Zwei Aufgaben:
    gar keine Shell anbietet (kein PTY, kein WebSocket). Damit bleibt die
    Sandbox luftdicht und der Nutzer bekommt trotzdem die Seitenleiste mit
    Vorschau (docx/xlsx/pptx/pdf/ipynb/csv/Bilder) und Download/ZIP.
+   Dazu die drei /notebooks-Endpunkte: OWUIs .ipynb-Viewer bietet "Run" und
+   "Run All" ungefragt an; dahinter laeuft hier ein echter IPython-Kernel im
+   selben luftdichten Container, Arbeitsverzeichnis ist der Chat-Ordner.
 
    OWUI ruft NICHT direkt hierher: der Browser spricht mit OWUI
    (/api/v1/terminals/<id>/...), OWUI proxyt serverseitig hierher und
@@ -56,6 +59,8 @@ import time
 import uuid
 import zipfile
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -73,7 +78,14 @@ READ_MAX_BYTES = int(os.environ.get("SANDBOX_READ_MAX_BYTES", str(2 * 1024 * 102
 # Uploads in den Chat-Ordner (Drag&Drop in der Seitenleiste).
 UPLOAD_MAX_BYTES = int(os.environ.get("SANDBOX_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
 
-app = FastAPI(title="Code Sandbox")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    yield
+    for _sid in list(_NB):          # offene Notebook-Kernel beenden
+        await _nb_stop(_sid)
+
+
+app = FastAPI(title="Code Sandbox", lifespan=_lifespan)
 
 # Merkt sich das zuletzt geoeffnete Verzeichnis je Chat (FileNav ruft dafuer
 # POST /files/cwd). Nur im RAM — nach einem Neustart landet man wieder oben.
@@ -489,6 +501,153 @@ async def files_move(req: MoveReq, session_id: str = Depends(_auth)):
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
     return {"source": _virt(src, root), "destination": _virt(dst, root)}
+
+
+# --- Notebook-Zellen ausfuehren (Datei-Browser: "Run"/"Run All") -------------
+#  OWUIs NotebookView.svelte fuehrt Zellen ueber drei Endpunkte aus:
+#    POST   /notebooks                  {path}                -> {id, kernel, status}
+#    POST   /notebooks/{id}/execute     {cell_index, source}  -> {status, execution_count, outputs}
+#    DELETE /notebooks/{id}
+#  'outputs' sind normale nbformat-Ausgaben (stream/execute_result/display_data/
+#  error) — genau das rendert die Komponente.
+#  Der Kernel laeuft IM luftdichten Container, Arbeitsverzeichnis ist der
+#  Chat-Ordner. Kein Netz, gleiche Grenzen wie /run.
+NB_MAX_SESSIONS = int(os.environ.get("SANDBOX_NB_MAX_SESSIONS", "3"))
+NB_CELL_TIMEOUT = int(os.environ.get("SANDBOX_NB_CELL_TIMEOUT", "120"))
+NB_IDLE_TIMEOUT = int(os.environ.get("SANDBOX_NB_IDLE_TIMEOUT", "1800"))
+_NB: "dict[str, dict]" = {}
+
+
+class NotebookReq(BaseModel):
+    path: str
+
+
+class ExecReq(BaseModel):
+    cell_index: int
+    source: str | None = None
+
+
+async def _nb_stop(sid: str) -> None:
+    s = _NB.pop(sid, None)
+    if not s:
+        return
+    try:
+        s["kc"].stop_channels()
+    except Exception:
+        pass
+    try:
+        await s["km"].shutdown_kernel(now=True)
+    except Exception:
+        pass
+
+
+async def _nb_reap() -> None:
+    """Leerlaufende Kernel einsammeln (der Browser schickt DELETE nicht immer)."""
+    now = time.time()
+    for sid, s in list(_NB.items()):
+        if now - s["used"] > NB_IDLE_TIMEOUT:
+            await _nb_stop(sid)
+
+
+@app.post("/notebooks", include_in_schema=False)
+async def nb_create(req: NotebookReq, session_id: str = Depends(_auth)):
+    await _nb_reap()
+    target = _resolve(session_id, req.path, must_exist=True)
+    if target.is_dir():
+        raise HTTPException(status_code=400, detail="Ist ein Verzeichnis")
+    if len(_NB) >= NB_MAX_SESSIONS:
+        raise HTTPException(status_code=429,
+                            detail=f"Zu viele offene Kernel (max. {NB_MAX_SESSIONS}) — "
+                                   "andere Notebooks schliessen")
+    try:
+        from jupyter_client.manager import AsyncKernelManager
+    except Exception as e:
+        raise HTTPException(status_code=501, detail=f"Kein Kernel verfuegbar: {e}")
+
+    # Standard-Transport (TCP auf 127.0.0.1). ipykernel warnt darueber, weil die
+    # Kernel-Verbindung unverschluesselt ist — im luftdichten Container ohne Netz
+    # und ohne weitere Nutzer ist das unkritisch. transport="ipc" waere sauberer,
+    # der Kernel kommt damit hier aber nicht hoch ("didn't respond in 60 seconds").
+    km = AsyncKernelManager(kernel_name="python3")
+    try:
+        await km.start_kernel(cwd=str(target.parent))
+        kc = km.client()
+        kc.start_channels()
+        await kc.wait_for_ready(timeout=60)
+    except Exception as e:
+        try:
+            await km.shutdown_kernel(now=True)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Kernel-Start fehlgeschlagen: {e}")
+
+    sid = uuid.uuid4().hex
+    _NB[sid] = {"km": km, "kc": kc, "chat": session_id or "", "used": time.time()}
+    return {"id": sid, "kernel": "python3", "status": "ready"}
+
+
+@app.post("/notebooks/{sid}/execute", include_in_schema=False)
+async def nb_execute(sid: str, req: ExecReq, session_id: str = Depends(_auth)):
+    s = _NB.get(sid)
+    if not s or s["chat"] != (session_id or ""):
+        raise HTTPException(status_code=404, detail="Kernel-Sitzung unbekannt")
+    s["used"] = time.time()
+    kc = s["kc"]
+
+    msg_id = kc.execute(req.source or "")
+    outputs: list[dict] = []
+    count = None
+    status = "ok"
+    deadline = time.time() + NB_CELL_TIMEOUT
+    while True:
+        rest = deadline - time.time()
+        if rest <= 0:
+            try:
+                await s["km"].interrupt_kernel()
+            except Exception:
+                pass
+            outputs.append({"output_type": "error", "ename": "Timeout",
+                            "evalue": f"Zelle nach {NB_CELL_TIMEOUT}s abgebrochen",
+                            "traceback": [f"Zelle nach {NB_CELL_TIMEOUT}s abgebrochen"]})
+            status = "error"
+            break
+        try:
+            msg = await kc.get_iopub_msg(timeout=rest)
+        except Exception:
+            continue
+        if (msg.get("parent_header") or {}).get("msg_id") != msg_id:
+            continue
+        t, c = msg["msg_type"], msg["content"]
+        if t == "status":
+            if c.get("execution_state") == "idle":
+                break
+        elif t == "execute_input":
+            count = c.get("execution_count")
+        elif t == "stream":
+            outputs.append({"output_type": "stream", "name": c.get("name", "stdout"),
+                            "text": c.get("text", "")})
+        elif t == "execute_result":
+            outputs.append({"output_type": "execute_result", "data": c.get("data", {}),
+                            "metadata": c.get("metadata", {}),
+                            "execution_count": c.get("execution_count")})
+        elif t == "display_data":
+            outputs.append({"output_type": "display_data", "data": c.get("data", {}),
+                            "metadata": c.get("metadata", {})})
+        elif t == "error":
+            outputs.append({"output_type": "error", "ename": c.get("ename", "Error"),
+                            "evalue": c.get("evalue", ""),
+                            "traceback": c.get("traceback", [])})
+            status = "error"
+    return {"status": status, "execution_count": count, "outputs": outputs}
+
+
+@app.delete("/notebooks/{sid}", include_in_schema=False)
+async def nb_delete(sid: str, session_id: str = Depends(_auth)):
+    s = _NB.get(sid)
+    if s and s["chat"] != (session_id or ""):
+        raise HTTPException(status_code=404, detail="Kernel-Sitzung unbekannt")
+    await _nb_stop(sid)
+    return {"ok": True}
 
 
 @app.get("/ports", include_in_schema=False)

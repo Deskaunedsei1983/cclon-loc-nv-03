@@ -1158,6 +1158,10 @@ _TEXT_OUT = (".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log",
 # Ohne den Filter bleibt der Block schlicht unsichtbar -> nichts geht kaputt.
 FILES_MARK_BEGIN = "<!--OWUI_FILES"
 FILES_MARK_END = "OWUI_FILES-->"
+# 'auto' (Default): Anhang-Block nur, wenn es KEINEN Datei-Browser gibt. Siehe
+# run_files_block(). 'always' = Datei-Kacheln im Chat, dafuer sieht man den
+# Marker bis zum Neuladen. 'never' = nie.
+FILES_MARKER_MODE = os.environ.get("AGENT_FILES_MARKER", "auto").strip().lower()
 # Bis zu dieser Groesse wird die Datei als base64 durch die CHAT-ANTWORT gereicht
 # (bequem, aber der Text landet so in der OWUI-Chat-DB; base64 blaeht ~+33%).
 SANDBOX_INLINE_MAX = int(os.environ.get("SANDBOX_INLINE_MAX", str(20 * 1024 * 1024)))
@@ -1214,9 +1218,20 @@ def reset_run_files(body: dict | None = None) -> None:
 
 
 def run_files_block() -> str:
-    """Die gesammelten Dateien als (im Markdown unsichtbarer) Anhang-Block.
-    Jeder Eintrag traegt ENTWEDER 'b64' (kleine Datei) ODER 'path' (grosse Datei,
-    liegt im gemounteten Sandbox-Volume und wird von OWUI direkt gelesen)."""
+    """Abschluss-Zeile mit den erzeugten Dateien — und optional der Anhang-Block
+    fuer den OWUI-Filter 'sandbox_files.py'.
+
+    Der Anhang-Block ist ein HTML-Kommentar, aber OWUI sanitized HTML und zeigt
+    ihn deshalb als TEXT an, bis der Filter ihn beim naechsten Laden der Antwort
+    herausschneidet. Solange der Datei-Browser (rechte Seitenleiste) laeuft,
+    braucht es diesen Umweg nicht mehr — die Dateien liegen ohnehin sichtbar im
+    Chat-Ordner. Darum:
+      AGENT_FILES_MARKER=auto   (Default) Block nur, wenn KEINE Datei-API da ist
+      AGENT_FILES_MARKER=always Block immer (Datei-Kacheln + Download-Links
+                                im Chat, dafuer der sichtbare Marker bis zum
+                                Neuladen)
+      AGENT_FILES_MARKER=never  nie
+    """
     if not _RUN_FILES:
         return ""
     import json as _json
@@ -1226,9 +1241,12 @@ def run_files_block() -> str:
         b = int(b or 0)
         return f"{b/1048576:.1f} MB" if b >= 1048576 else (f"{b/1024:.1f} KB" if b >= 1024 else f"{b} B")
 
-    # Lesbare Zeile: ist der OWUI-Filter NICHT installiert, sieht man wenigstens,
-    # welche Dateien erzeugt wurden (der Filter ersetzt sie durch echte Kacheln).
     names = ", ".join(f"{i['name']} ({_hr(i.get('size'))})" for i in items)
+    mode = FILES_MARKER_MODE
+    if mode == "auto":
+        mode = "never" if (SANDBOX_FILES_TOKEN and SANDBOX_FILES_URL) else "always"
+    if mode != "always":
+        return f"\n\n**Erzeugte Dateien:** {names}  \n_Zu finden rechts unter „Files“._"
     human = f"\n\n**Erzeugte Dateien:** {names}"
     return f"{human}\n\n{FILES_MARK_BEGIN}\n{_json.dumps(items)}\n{FILES_MARK_END}\n"
 

@@ -196,6 +196,49 @@ Datei, muss sie per `run_code` geschrieben werden — der Dateiinhalt gehört
 das Notebook“ gern mit dem kompletten Notebook-JSON im Chat, und es entsteht
 keine Datei zum Herunterladen.
 
+### Notebook-Zellen im Browser ausführen
+
+`FilePreview.svelte` rendert jedes `.ipynb` mit `NotebookView.svelte` — samt
+**Run** je Zelle und **Run All**, ungefragt und ohne Feature-Flag. Ohne passende
+Endpunkte antwortet der Terminal-Server 404, und im Viewer steht **„Not Found“**.
+
+Die Sandbox implementiert sie jetzt (nbformat-Ausgaben, genau was die Komponente
+rendert):
+
+```
+POST   /notebooks                 {path}                → {id, kernel, status}
+POST   /notebooks/{id}/execute    {cell_index, source}  → {status, execution_count, outputs}
+DELETE /notebooks/{id}
+```
+
+Dahinter läuft ein echter IPython-Kernel (`jupyter_client.AsyncKernelManager`)
+**im luftdichten Container**, Arbeitsverzeichnis ist der Chat-Ordner. Eine Zelle
+kann also die Dateien ihres Chats lesen und neue schreiben — die tauchen sofort
+in der Liste auf. Der Kernel-Zustand bleibt zwischen Zellen erhalten.
+
+Grenzen: `SANDBOX_NB_MAX_SESSIONS` (3) gleichzeitige Kernel,
+`SANDBOX_NB_CELL_TIMEOUT` (120 s) je Zelle — danach wird interrupt geschickt und
+ein `error`-Output geliefert statt zu hängen —, `SANDBOX_NB_IDLE_TIMEOUT`
+(1800 s) bis ein vergessener Kernel eingesammelt wird. Eine Kernel-Sitzung ist an
+ihren Chat gebunden; ein anderer Chat bekommt 404.
+
+### Der Anhang-Block ist verschwunden
+
+Der Marker `<!--OWUI_FILES …-->` ist **kein** unsichtbarer Kommentar: OWUI
+sanitized HTML und zeigt ihn als Text, bis der Outlet-Filter ihn beim nächsten
+Laden herausschneidet. Solange der Datei-Browser läuft, braucht es diesen Umweg
+nicht mehr — die Dateien liegen ohnehin sichtbar im Chat-Ordner. `AGENT_FILES_MARKER`
+steuert das:
+
+| Wert | Verhalten |
+|---|---|
+| `auto` (Default) | Block nur, wenn **keine** Datei-API konfiguriert ist |
+| `always` | Block immer — Datei-Kacheln und Download-Links im Chat (via Filter), dafür der sichtbare Marker bis zum Neuladen |
+| `never` | nie |
+
+Im Chat bleibt in jedem Fall die Zeile **„Erzeugte Dateien: … “** mit Namen und
+Größe stehen.
+
 ### Seitenleiste öffnet sich von selbst
 
 Der Filter `sandbox_files.py` sendet nach der Antwort das Event

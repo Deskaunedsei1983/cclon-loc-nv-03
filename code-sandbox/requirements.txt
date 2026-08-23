@@ -4,6 +4,11 @@
 # (u.a. CVE-2026-73415/73417, CVE-2026-44727, CVE-2026-35397).
 jupyterlab==4.6.3
 jupyter-server==2.20.0
+# Zellen aus OWUIs Datei-Browser ausfuehren ("Run"/"Run All" im .ipynb-Viewer):
+# run_api.py startet dafuer einen echten Kernel ueber jupyter_client. Beide sind
+# transitiv ohnehin da — hier explizit, damit die Endpunkte nicht still ausfallen.
+jupyter-client==8.9.1
+ipykernel==7.3.0
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 # Multipart-Uploads: OWUIs Datei-Browser (rechte Seitenleiste) laedt Dateien

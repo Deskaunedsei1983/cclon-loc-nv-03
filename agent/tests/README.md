@@ -11,7 +11,7 @@ python3 -m venv /tmp/sbtest && /tmp/sbtest/bin/pip install -q httpx
 /tmp/sbtest/bin/python agent/tests/test_artifact_logic.py
 ```
 
-Geprüft wird:
+Geprüft wird (`test_artifact_logic.py`):
 
 * **`artifact_request_hint(query)`** — erkennt aus der Anfrage, dass eine Datei
   gewünscht ist (Notebook, Excel, Word, PowerPoint, PDF, CSV, Skript), und nur
@@ -21,3 +21,9 @@ Geprüft wird:
   eine Datei im Chat-Ordner. Notebook-JSON wird am Inhalt erkannt (`"cells"` +
   `"nbformat"`), kleine Beispielblöcke bleiben inline, und wenn schon eine Datei
   entstanden ist, greift das Netz nicht.
+
+`test_marker.py` prüft `run_files_block()`: solange die Datei-API läuft, steht
+**kein** `<!--OWUI_FILES …-->`-Block mehr in der Antwort — OWUI sanitized HTML
+und würde ihn als Text anzeigen. Der Dateiname bleibt sichtbar, Pfade und JSON
+nicht. Ohne Datei-API (kein Token) kommt der Block als Notnagel zurück, damit
+der Filter weiterhin Download-Chips bauen kann.
