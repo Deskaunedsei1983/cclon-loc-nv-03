@@ -245,6 +245,24 @@ WERKZEUGE & ABLAUF
    python-docx/openpyxl/python-pptx/nbformat vorhanden). Behaupte ein Ergebnis nie,
    ohne den Code ausgefuehrt zu haben.
 
+5) ARTEFAKT-REGEL (STRIKT): Ist das gewuenschte Ergebnis eine DATEI — Notebook
+   (.ipynb), Word/Excel/PowerPoint, PDF, CSV, Skript, Bild —, dann SCHREIBE sie
+   mit 'run_code' ins Arbeitsverzeichnis. Der Dateiinhalt gehoert NICHT in die
+   Antwort: kein Notebook-JSON, kein kompletter Quelltext-Dump, kein
+   "hier ist die verbesserte Fassung" gefolgt vom ganzen Inhalt.
+   In die Antwort gehoeren nur: (a) was geaendert/erzeugt wurde, (b) der
+   Dateiname, (c) ggf. kurze Ausschnitte der WICHTIGSTEN Aenderung (max. ~15
+   Zeilen). Das gilt genauso fuer "ueberarbeite / verbessere / erweitere /
+   erstelle neu": ERST die Datei schreiben, DANN kurz berichten.
+   Ohne ausgefuehrtes 'run_code' entsteht keine Datei, die der Nutzer oeffnen
+   oder herunterladen kann — eine Antwort mit Dateiinhalt STATT Datei ist ein
+   Fehler, keine Abkuerzung.
+   Liegt eine hochgeladene Datei als 'document.txt' im Arbeitsverzeichnis, ist
+   das ihr ROHINHALT: .ipynb/.json mit json bzw. nbformat parsen, Tabellen mit
+   polars/pandas — dann das Ergebnis unter einem SPRECHENDEN neuen Namen
+   speichern (z.B. '<originalname>_v2.ipynb'), nicht 'document.txt'
+   ueberschreiben.
+
 Smalltalk/triviale Fragen ohne Faktenbezug: ohne Tools direkt antworten.
 Nenne am Ende die Quellen (RAG-Dokument + ggf. URL) und erzeugte Dateinamen.
 """
@@ -270,6 +288,59 @@ def now_context() -> str:
         "aus; nutze NICHT dein Trainingswissen als 'jetzt'. Bei laufenden oder "
         "kuerzlich gestarteten Ereignissen NICHT annehmen, etwas habe noch nicht "
         "stattgefunden; fehlende Live-Daten als offen/ungeprueft kennzeichnen."
+    )
+
+
+#  Endung -> (Bezeichnung MIT Artikel, Bibliothek zum Einlesen, Ausgabename)
+#  Wichtig: 'document.txt' ist NICHT bei jedem Format der Rohinhalt — file_to_text()
+#  extrahiert bei .docx/.pdf nur den Fliesstext. Darum bekommt das Modell zusaetzlich
+#  die ORIGINALDATEI in den Chat-Ordner gelegt (siehe _ensure_document_staged) und
+#  der Hinweis nennt IMMER diese Originaldatei, nicht document.txt.
+_ARTIFACT_EXT = {
+    ".ipynb": ("ein Jupyter-Notebook", "json bzw. nbformat", "{stem}_v2.ipynb"),
+    ".json":  ("eine JSON-Datei", "json", "{stem}_v2.json"),
+    ".csv":   ("eine Tabelle", "polars", "{stem}_v2.csv"),
+    ".tsv":   ("eine Tabelle", "polars", "{stem}_v2.tsv"),
+    ".xlsx":  ("eine Excel-Mappe", "openpyxl bzw. polars.read_excel", "{stem}_v2.xlsx"),
+    ".docx":  ("ein Word-Dokument", "python-docx", "{stem}_v2.docx"),
+    ".pptx":  ("eine Praesentation", "python-pptx", "{stem}_v2.pptx"),
+    ".pdf":   ("ein PDF", "pypdf", "{stem}_v2.pdf"),
+    ".py":    ("ein Python-Skript", "open()", "{stem}_v2.py"),
+    ".sql":   ("ein SQL-Skript", "open()", "{stem}_v2.sql"),
+    ".md":    ("eine Markdown-Datei", "open()", "{stem}_v2.md"),
+}
+
+
+def artifact_hint(name: str) -> str:
+    """Zusatzhinweis fuer den Request, wenn eine bearbeitbare Datei hochgeladen
+    wurde. Ohne ihn beantwortet das Modell 'ueberarbeite das Notebook' gern mit
+    dem kompletten JSON im Chat statt mit einer Datei zum Herunterladen."""
+    stem, ext = os.path.splitext(name or "")
+    info = _ARTIFACT_EXT.get(ext.lower())
+    if not info:
+        return ""
+    kind, parser, out = info
+    stem = (stem or "ergebnis").replace(" ", "_")
+    ziel = out.format(stem=stem)
+    if _files_api_headers():
+        quelle = (f"liegt als ORIGINALDATEI '{name}' im Arbeitsverzeichnis der "
+                  f"Sandbox — mit {parser} einlesen (NICHT 'document.txt', das "
+                  f"ist nur die Textfassung)")
+    elif ext.lower() in (".ipynb", ".json", ".csv", ".tsv", ".py", ".sql", ".md"):
+        quelle = (f"liegt als 'document.txt' im Arbeitsverzeichnis — das ist der "
+                  f"ROHINHALT der Datei, mit {parser} einlesen")
+    else:
+        # Binaerformat ohne Datei-API: document.txt ist nur extrahierter Text.
+        quelle = ("liegt NUR als extrahierter Text in 'document.txt' vor (die "
+                  "Originaldatei steht der Sandbox nicht zur Verfuegung) — die "
+                  "neue Datei daraus neu aufbauen und das im Ergebnis erwaehnen")
+    return (
+        f"ARTEFAKT-AUFTRAG: '{name}' ist {kind} und {quelle}. "
+        f"Soll die Datei geaendert/verbessert/neu erstellt werden: IMMER per "
+        f"'run_code' eine NEUE Datei schreiben (Vorschlag: '{ziel}'), das "
+        f"Original nicht ueberschreiben. In die Antwort gehoert NUR eine kurze "
+        f"Aenderungsliste plus der Dateiname — den Dateiinhalt NICHT in die "
+        f"Antwort kopieren."
     )
 
 
@@ -824,6 +895,10 @@ def read_full_document(body: dict):
     text = file_to_text(name, ctype, data)
     if not text or not text.strip():
         return None
+    # Rohbytes merken: sie werden beim ersten run_code als ORIGINALDATEI in den
+    # Chat-Ordner gelegt (siehe _ensure_document_staged).
+    global _LAST_DOC_RAW
+    _LAST_DOC_RAW = (os.path.basename(name) or "upload.bin", data)
     log.info("Volltext geladen: %s (%d Zeichen)", name, len(text))
     return name, text
 
@@ -948,30 +1023,77 @@ async def _post_run(http: httpx.AsyncClient, url: str, code: str, files: dict | 
     return r.json()
 
 
+def _files_api_headers() -> dict | None:
+    if not (_CHAT_ID and SANDBOX_FILES_TOKEN and SANDBOX_FILES_URL):
+        return None
+    return {"Authorization": f"Bearer {SANDBOX_FILES_TOKEN}", "X-Session-Id": _CHAT_ID}
+
+
+async def _put_into_chat_folder(http: httpx.AsyncClient, name: str, data: bytes) -> str:
+    """Eine Datei in den Chat-Ordner der Sandbox legen -> Pfad dort (oder '')."""
+    headers = _files_api_headers()
+    if not headers:
+        return ""
+    r = await http.post(f"{SANDBOX_FILES_URL.rstrip('/')}/files/upload",
+                        params={"directory": "/"}, headers=headers,
+                        files={"file": (name, data)}, timeout=180.0)
+    r.raise_for_status()
+    return r.json().get("path", "")
+
+
 async def _mirror_to_chat_folder(http: httpx.AsyncClient, chat_id: str, files: list) -> dict:
     """Dateien aus einem NICHT-lokalen Lauf (microVM) in den Chat-Ordner der
     Sandbox legen. Damit zeigt OWUIs Datei-Browser (rechte Seitenleiste) immer
     alle Dateien des Chats — egal welche Engine sie erzeugt hat.
     Liefert {name: pfad_in_der_sandbox} fuer die erfolgreich gespiegelten."""
-    if not (chat_id and SANDBOX_FILES_TOKEN and SANDBOX_FILES_URL):
+    if not _files_api_headers():
         return {}
     out: dict[str, str] = {}
-    headers = {"Authorization": f"Bearer {SANDBOX_FILES_TOKEN}", "X-Session-Id": chat_id}
     for f in files:
         nm, b64 = f.get("name"), f.get("base64")
         if not (nm and b64):
             continue  # ohne Inhalt nichts zu spiegeln (grosse microVM-Dateien)
         try:
-            r = await http.post(f"{SANDBOX_FILES_URL.rstrip('/')}/files/upload",
-                                params={"directory": "/"}, headers=headers,
-                                files={"file": (nm, base64.b64decode(b64))}, timeout=120.0)
-            r.raise_for_status()
-            out[nm] = r.json().get("path", "")
+            p = await _put_into_chat_folder(http, nm, base64.b64decode(b64))
+            if p:
+                out[nm] = p
         except Exception as e:
             log.warning("Spiegeln von '%s' in den Chat-Ordner fehlgeschlagen: %s", nm, e)
     if out:
         log.info("%d Datei(en) in den Chat-Ordner gespiegelt (Datei-Browser)", len(out))
     return out
+
+
+async def _ensure_document_staged(http: httpx.AsyncClient) -> None:
+    """Die HOCHGELADENE Originaldatei einmal pro Anfrage in den Chat-Ordner legen.
+
+    Warum: 'document.txt' ist nur die TEXTFASSUNG (bei .docx/.pdf sogar nur der
+    extrahierte Fliesstext). Wer ein Notebook oder eine Excel-Mappe ueberarbeiten
+    soll, braucht die echte Datei — sonst bleibt dem Modell nur, den Inhalt in den
+    Chat zu schreiben. Liegt sie schon unveraendert dort, passiert nichts."""
+    global _DOC_STAGED
+    if _DOC_STAGED or not _LAST_DOC_RAW:
+        return
+    _DOC_STAGED = True          # auch bei Fehlschlag nicht in jeder Runde neu versuchen
+    name, data = _LAST_DOC_RAW
+    headers = _files_api_headers()
+    if not headers:
+        return
+    base = SANDBOX_FILES_URL.rstrip("/")
+    try:
+        r = await http.get(f"{base}/files/list", params={"directory": "/"},
+                           headers=headers, timeout=30.0)
+        if r.status_code == 200:
+            for e in r.json().get("entries", []):
+                if e.get("name") == name and e.get("size") == len(data):
+                    log.debug("Originaldatei '%s' liegt bereits im Chat-Ordner", name)
+                    return
+        p = await _put_into_chat_folder(http, name, data)
+        if p:
+            log.info("Originaldatei '%s' (%d B) in den Chat-Ordner gelegt: %s",
+                     name, len(data), p)
+    except Exception as e:
+        log.warning("Originaldatei '%s' nicht in den Chat-Ordner uebertragbar: %s", name, e)
 
 
 _TEXT_OUT = (".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log",
@@ -1000,6 +1122,11 @@ _RUN_FILES: "dict[str, dict]" = {}
 # die Sandbox-Arbeitsordner und ist zugleich der Schluessel, unter dem OWUIs
 # Datei-Browser die Dateien des Chats abfragt (Header X-Session-Id).
 _CHAT_ID: str = ""
+# Rohbytes der hochgeladenen Datei dieses Requests (Name, Daten) — daraus wird die
+# ORIGINALDATEI in den Chat-Ordner der Sandbox gelegt, damit 'run_code' sie mit
+# nbformat/openpyxl/python-docx bearbeiten kann statt nur mit der Textfassung.
+_LAST_DOC_RAW: "tuple[str, bytes] | None" = None
+_DOC_STAGED: bool = False
 
 _CTYPE = {
     ".ipynb": "application/x-ipynb+json", ".json": "application/json",
@@ -1021,8 +1148,10 @@ def _guess_ctype(name: str) -> str:
 def reset_run_files(body: dict | None = None) -> None:
     """Vor jedem Request leeren (sonst wandern Dateien in den naechsten Chat)
     und die Chat-ID aus dem OWUI-Body uebernehmen."""
-    global _CHAT_ID
+    global _CHAT_ID, _LAST_DOC_RAW, _DOC_STAGED
     _RUN_FILES.clear()
+    _LAST_DOC_RAW = None
+    _DOC_STAGED = False
     b = body or {}
     # OWUI liefert die Chat-ID in metadata; manche Aufrufer setzen sie flach.
     cid = (b.get("metadata") or {}).get("chat_id") or b.get("chat_id") or ""
@@ -1057,6 +1186,9 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
     """Python ausfuehren. Bei Eingabedateien (Volltext-Modus) direkt die luftdichte
     Subprozess-Sandbox; sonst bevorzugt die microVM. Erzeugte Text-Dateien (CSV etc.)
     werden INLINE zurueckgegeben (kopierbar)."""
+    # Originaldatei des Uploads einmalig in den Chat-Ordner legen, damit der Code
+    # sie direkt oeffnen kann (Notebook/Excel/Word ueberarbeiten).
+    await _ensure_document_staged(http)
     engine = "microVM (Microsandbox)"
     res = None
     if MSB_EXECUTOR_URL and not files:  # microVM-Pfad nur ohne Eingabedateien

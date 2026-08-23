@@ -167,6 +167,9 @@ async def draft(state: State) -> State:
             f"und UNVOLLSTAENDIG (nur Top-Tokens) — die endgueltige Tabelle kommt AUS DEM CODE. "
             f"Schreibe NIEMALS '< 100' oder 'nicht in Top-N'; gib fuer JEDEN Namen die exakte Zahl.\n"
             f"Extrahierte Tokens (exakte Schreibweise, Token:Anzahl):\n{cand_line}")
+        hint = C.artifact_hint(state.get("fulldoc_name", ""))
+        if hint:
+            parts.append("\n" + hint)
     parts.append("\nBrauchst du eine Berechnung/Datei, gib EINEN ```python ...``` Block aus; "
                  "er wird in der Sandbox ausgefuehrt.")
     sys = _SYS_ORCHESTRATED + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context()

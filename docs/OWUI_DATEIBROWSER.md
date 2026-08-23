@@ -98,6 +98,26 @@ Deshalb prüft `_resolve()` jetzt in drei Stufen:
 
 Außerhalb des Sandbox-Volumes bleibt **alles** hart bei 403.
 
+### Hochgeladene Datei liegt als Original im Chat-Ordner
+
+`document.txt` ist nur die **Textfassung** des Uploads — bei `.docx`/`.pdf` sogar
+nur der extrahierte Fließtext, bei `.xlsx`/`.pptx` unbrauchbar (ein als UTF-8
+dekodiertes ZIP). Wer „verbessere dieses Notebook“ sagt, braucht die echte Datei.
+
+Deshalb legt der Agent beim ersten `run_code` einer Anfrage die **Originaldatei
+unter ihrem echten Namen** in den Chat-Ordner (`_ensure_document_staged` →
+`POST /files/upload`), einmal pro Anfrage und nur, wenn dort nicht schon eine
+Datei gleichen Namens und gleicher Größe liegt. Der Code kann dann direkt
+`json.load(open('Analyse.ipynb'))` bzw. `openpyxl`/`python-docx` benutzen, und
+der Datei-Browser zeigt Original und Ergebnis nebeneinander.
+
+Dazu kommt eine **Artefakt-Regel** im System-Prompt und ein passgenauer
+`ARTEFAKT-AUFTRAG` im Request (`common.artifact_hint`): Ist das Ergebnis eine
+Datei, muss sie per `run_code` geschrieben werden — der Dateiinhalt gehört
+**nicht** in die Antwort. Ohne diese Regel beantwortet das Modell „überarbeite
+das Notebook“ gern mit dem kompletten Notebook-JSON im Chat, und es entsteht
+keine Datei zum Herunterladen.
+
 ### Seitenleiste öffnet sich von selbst
 
 Der Filter `sandbox_files.py` sendet nach der Antwort das Event

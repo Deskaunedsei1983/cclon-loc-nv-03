@@ -59,7 +59,10 @@ async def search_web(ctx: RunContext[Deps], query: str) -> str:
 @_agent.tool
 async def run_code(ctx: RunContext[Deps], code: str) -> str:
     """Python in der luftdichten Sandbox ausfuehren (Office-Files/Notebooks moeglich).
-    Im Volltext-Modus liegt die ganze Datei als 'document.txt' im Arbeitsverzeichnis."""
+    Das Arbeitsverzeichnis gehoert zu DIESEM Chat und bleibt ueber mehrere Aufrufe
+    bestehen. Bei einem Upload liegen dort die ORIGINALDATEI (mit ihrem echten
+    Namen, z.B. 'Analyse.ipynb') und zusaetzlich ihre Textfassung 'document.txt'.
+    Erzeugte Dateien landen im selben Ordner und sind fuer den Nutzer sichtbar."""
     files = None
     if ctx.deps.fulltext:
         files = {"document.txt": base64.b64encode(
@@ -84,7 +87,11 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
     query = C.extract_query(messages)
     C.reset_run_files(request_body)   # Sandbox-Dateien pro Anfrage frisch sammeln (+ Chat-ID)
     C.schedule_ingest(request_body or {})  # Chat-Upload lokal nach RAGFlow/Morphik (nicht-blockierend)
-    parts = [C.mem_search(_memory, query, user_id)]
+    # Zeitbezug pro Anfrage: der Agent wird mit dem STATISCHEN SYSTEM_PROMPT
+    # gebaut (Import-Zeit), das Datum darf aber nicht auf den Containerstart
+    # einfrieren -> hier bei jedem Request mitgeben.
+    parts = ["AKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context(),
+             C.mem_search(_memory, query, user_id)]
     fulltext = only_doc = None
     doc = C.read_full_document(request_body or {})  # Volltext der angehaengten Datei
     if doc:
@@ -106,6 +113,9 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
             f"schreiben, immer die exakte Zahl aus dem Code.\n"
             f"Extrahierte Tokens (exakte Schreibweise, Token:Anzahl):\n{cand_line}\n"
             f"Vorschau (Anfang):\n{fulltext[:600]}\n")
+        # Soll eine DATEI ueberarbeitet werden, muss auch eine Datei herauskommen —
+        # sonst landet der komplette Inhalt (z.B. Notebook-JSON) im Chat.
+        parts.append(C.artifact_hint(name))
     parts.append(f"Aktuelle Anfrage:\n{query}")
     prompt = "\n".join(p for p in parts if p)
     async with httpx.AsyncClient() as http:
