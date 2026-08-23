@@ -1,4 +1,11 @@
-# Datei-Browser in der rechten Seitenleiste (Open WebUI 0.11)
+# Datei-Browser in der rechten Seitenleiste (Open WebUI 0.11.0)
+
+> **Versionsstand:** alles hier ist gegen **Open WebUI 0.11.0** geprüft — exakt
+> das Image, das `docker-compose.yml` pinnt
+> (`ghcr.io/open-webui/open-webui:0.11.0`). Alle Zeilenangaben stammen aus
+> diesem Quelltext, nicht aus älteren Versionen oder aus der Online-Doku
+> (die beschreibt einen anderen Stand). Nach einem OWUI-Upgrade gehört dieses
+> Dokument gegengeprüft.
 
 ## Kurzfassung
 
@@ -98,9 +105,23 @@ OWUI-Container.
 ./open-webui/setup-dateibrowser.sh
 ```
 
-Das Skript prüft die Erreichbarkeit **aus dem OWUI-Container**, schreibt den
-Terminal-Server direkt in OWUIs Config (idempotent, vorhandene Einträge bleiben)
-und startet OWUI neu. Alternativ von Hand — dann aber unbedingt so:
+Das Skript prüft in fünf Schritten und schreibt den Terminal-Server direkt in
+OWUIs Config (idempotent, vorhandene Einträge bleiben), dann Neustart:
+
+1. Token aus der `.env` gegen den **laufenden** `code_sandbox` abgleichen
+   (häufigster Fehler: `.env` geändert, Container nicht neu erzeugt),
+2. Datei-API im `code_sandbox` (`/api/config` → `features.terminal=false`),
+3. Erreichbarkeit **aus dem OWUI-Container**: DNS, HTTP-Status, Proxy-Warnung,
+4. Config-Eintrag schreiben und den gespeicherten Stand ausgeben,
+5. OWUI neu starten.
+
+Nur diagnostizieren, ohne etwas zu ändern:
+
+```bash
+./open-webui/setup-dateibrowser.sh --check
+```
+
+Alternativ von Hand — dann aber unbedingt so:
 
 #### Nur im ADMIN-Bereich eintragen — nicht in den Benutzer-Einstellungen
 
@@ -143,13 +164,21 @@ print(r.status, r.read().decode())
 
 ### 2. Modell verknüpfen
 
-**Workspace → Models → `research-agent` → Capabilities → „Terminal“ an**, darunter
-im Auswahlfeld den Server *Chat-Dateien* wählen. Das schreibt
-`meta.terminalId` ins Modell; `Chat.svelte` setzt daraufhin bei jedem neuen Chat
-automatisch `selectedTerminalId` → der Reiter **Files** erscheint und öffnet sich
-von selbst (`ChatControls.svelte`).
+In 0.11.0 liegt die Modell-Maske an **zwei** Stellen (dieselbe Maske,
+`ModelEditor.svelte`):
 
-Ohne diesen Schritt bliebe der Reiter aus, weil `showFilesTab`
+* **Admin-Bereich → Models → `research-agent`** ← so sieht man sie im Admin-Menü
+* Workspace → Models → `research-agent`
+
+Dort **Capabilities → „Terminal“ anhaken**; darunter erscheint der Abschnitt
+**Terminal** mit einem Auswahlfeld → *Chat-Dateien* wählen → unten **„Save &
+Update“ drücken**. Ohne Speichern passiert nichts.
+
+Das schreibt `meta.terminalId` ins Modell; `Chat.svelte` setzt daraufhin bei
+jedem neuen Chat automatisch `selectedTerminalId` → der Reiter **Files**
+erscheint und öffnet sich von selbst (`ChatControls.svelte`).
+
+Ohne diesen Schritt bleibt der Reiter aus, weil `showFilesTab`
 `selectedTerminalId` verlangt.
 
 ### 3. Neu bauen
