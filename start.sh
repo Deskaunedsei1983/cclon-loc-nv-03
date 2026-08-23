@@ -129,8 +129,8 @@ if [ -f .env ]; then
     printf '# Datei-Browser (rechte Seitenleiste) -> code-sandbox. Automatisch erzeugt.\nOWUI_TERMINAL_SERVERS=[{"id":"sandbox","name":"Chat-Dateien","url":"http://code-sandbox:8000","key":"%s","auth_type":"bearer","enabled":true}]\n' "$_sft" >> .env
     echo "   + OWUI_TERMINAL_SERVERS in .env erzeugt (Datei-Browser rechte Seitenleiste)"
     echo "     ! Bestehende OWUI-Installation: OWUI uebernimmt die Variable nur beim"
-    echo "       ERSTEN Start. Sonst unter Admin -> Einstellungen -> Integrations ->"
-    echo "       Terminal Servers eintragen (siehe docs/OWUI_DATEIBROWSER.md)."
+    echo "       ERSTEN Start. Danach einmalig:  ./open-webui/setup-dateibrowser.sh"
+    echo "       (siehe docs/OWUI_DATEIBROWSER.md)"
   fi
 fi
 

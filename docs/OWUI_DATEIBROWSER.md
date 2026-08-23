@@ -90,10 +90,56 @@ OWUI-Container.
 > **Achtung bei bestehender Installation:** OWUI seedet Config-Defaults nur
 > einmal — `Config.seed_defaults()` überspringt Schlüssel, die schon in der DB
 > stehen („Existing DB values take precedence over defaults“). Wer OWUI vorher
-> schon gestartet hat, trägt den Server stattdessen in der Oberfläche ein:
-> **Admin → Einstellungen → Integrations → Terminal Servers → „+“**
-> mit `URL = http://code-sandbox:8000`, `Key = SANDBOX_FILES_TOKEN`,
-> `Name = Chat-Dateien`, aktiviert.
+> schon gestartet hat, für den bleibt die `.env` an dieser Stelle wirkungslos.
+
+**Einfachster Weg:**
+
+```bash
+./open-webui/setup-dateibrowser.sh
+```
+
+Das Skript prüft die Erreichbarkeit **aus dem OWUI-Container**, schreibt den
+Terminal-Server direkt in OWUIs Config (idempotent, vorhandene Einträge bleiben)
+und startet OWUI neu. Alternativ von Hand — dann aber unbedingt so:
+
+#### Nur im ADMIN-Bereich eintragen — nicht in den Benutzer-Einstellungen
+
+Es gibt in OWUI **zwei** Stellen für Terminal-Server, und nur eine funktioniert
+mit einem Docker-internen Hostnamen:
+
+| Stelle | Komponente | Verbindungstest |
+|---|---|---|
+| **Admin-Bereich → Einstellungen → Integrations → Terminal Servers** | `admin/Settings/Integrations.svelte` (`direct = false`) | **serverseitig** über `POST /api/v1/configs/terminal_servers/verify` — der OWUI-Container fragt `http://code-sandbox:8000/api/config` ✔ |
+| Einstellungen (Benutzer) → Integrations → Terminals | `chat/Settings/Integrations/Terminals.svelte` (`direct = true`) | **im Browser** (`AddTerminalServerModal.svelte`: *„Direct connection: verify from browser“*) → `code-sandbox` ist für den Browser kein auflösbarer Name ✘ |
+
+Erkennungsmerkmal für den falschen Weg: *„Server connection failed“* **und im
+`code_sandbox`-Log taucht überhaupt kein Request auf** (dort steht dann nur der
+`127.0.0.1`-Aufruf der `start.sh`-Prüfung). Die Anfrage hat den Container nie
+erreicht, weil sie aus dem Browser kam.
+
+#### Felder im Admin-Dialog
+
+* **ID**: `sandbox` — **Pflicht, obwohl das Feld „auto“ als Platzhalter zeigt.**
+  Das Backend erzeugt keine ID (`TerminalServerConnection.id` bleibt `''`), und
+  ohne ID greift weder `showFilesTab` (`t.id && t.id === $selectedTerminalId`)
+  noch die Modell-Auswahl.
+* **Name**: `Chat-Dateien`
+* **URL**: `http://code-sandbox:8000` (ohne Slash am Ende)
+* **Key**: der Wert von `SANDBOX_FILES_TOKEN` aus der `.env`
+* **Auth**: `bearer`, **aktiviert** an
+
+Gegenprobe aus dem OWUI-Container (muss `200` liefern):
+
+```bash
+TOKEN=$(grep -E '^SANDBOX_FILES_TOKEN=' .env | cut -d= -f2-)
+docker exec open-webui python3 -c "
+import urllib.request, sys
+req = urllib.request.Request('http://code-sandbox:8000/api/config',
+                             headers={'Authorization': 'Bearer $TOKEN'})
+r = urllib.request.urlopen(req, timeout=5)
+print(r.status, r.read().decode())
+"
+```
 
 ### 2. Modell verknüpfen
 
