@@ -28,3 +28,34 @@ scrape_configs:
   - job_name: nvidia        # GPU/VRAM/Util/Temp/Power
     static_configs:
       - targets: ['nvidia-exporter:9835']
+
+  # --- LLM-Leistung ---------------------------------------------------------
+  #  vLLM liefert seine Prometheus-Metriken auf DEMSELBEN Port wie die OpenAI-API
+  #  unter /metrics (vllm:generation_tokens_total, vllm:time_to_first_token_seconds,
+  #  vllm:kv_cache_usage_perc, vllm:num_requests_waiting, Spekulative Dekodierung ...).
+  #  'vllm-main' ist ein Netz-Alias und zeigt IMMER auf das aktive Hauptmodell,
+  #  egal welches main-*-Profil laeuft. Der Helfer ist optional (Profil 'helper')
+  #  -> Prometheus meldet ihn dann als 'down', das ist erwartet und harmlos.
+  - job_name: vllm-main
+    scrape_interval: 5s     # feiner als der Rest: Token/s soll man live sehen
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['vllm-main:5568']
+        labels:
+          rolle: hauptmodell
+
+  - job_name: vllm-helper
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['vllm-helper:30001']
+        labels:
+          rolle: helfer
+
+  - job_name: embeddings    # TEI liefert /metrics auf dem API-Port
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['embeddings:80']
+        labels:
+          rolle: embeddings

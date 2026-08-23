@@ -128,6 +128,9 @@ services:
       - "${PROMETHEUS_PORT:-9090}:9090"
     networks:
       - aistack-observability
+      # Zusaetzlich ins Kernnetz, um vLLM (/metrics auf dem API-Port) und die
+      # Embeddings zu scrapen — sonst gaebe es keine Token-Kennzahlen.
+      - aistack-core
 
   # Host-Metriken: CPU/RAM/Disk-I/O/Netz pro Interface
   node-exporter:

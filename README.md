@@ -12,8 +12,9 @@ eigene neue Docker-Netze, eigenes RAGFlow, eigene Volumes.
 > [`docs/FLOW.md`](docs/FLOW.md) — Abläufe & Datenflüsse ·
 > [`docs/USECASES.md`](docs/USECASES.md) — durchgespielte Use-Cases ·
 > [`docs/HOST_UPDATES.md`](docs/HOST_UPDATES.md) — **TODO nach NVIDIA-Treiber-/Kernel-Update** (CUDA-Fix) ·
-> [`docs/OWUI_DATEIBROWSER.md`](docs/OWUI_DATEIBROWSER.md) — Datei-Browser in der rechten Seitenleiste (Einrichtung).
-> Diese drei spiegeln den jeweils aktuellen Stand (inkl. der drei Hauptmodell-Varianten,
+> [`docs/OWUI_DATEIBROWSER.md`](docs/OWUI_DATEIBROWSER.md) — Datei-Browser in der rechten Seitenleiste (Einrichtung) ·
+> [`docs/LLM_LEISTUNG.md`](docs/LLM_LEISTUNG.md) — Token-Durchsatz messen, verstehen, verbessern (`./llm-bench.sh` + Grafana).
+> Diese Dokumente spiegeln den jeweils aktuellen Stand (inkl. der drei Hauptmodell-Varianten,
 > CPU-Struct-Helfer, Mem0-Selektor, Trust-Liste/Blocklist) und gehen dem README-Text bei
 > Abweichungen vor.
 
@@ -87,7 +88,10 @@ COMPOSE_PROFILES=main-nemotron,mem0struct     # nvidia/NVIDIA-Nemotron-3.5-Light
   (`docker rm -f vllm_main vllm_main_qwen_plain vllm_main_nemotron`), dann `./start.sh`.
 
 **Nemotron-Stellschrauben** (`.env`): `NEMOTRON_MAX_LEN` (260000) ·
-`NEMOTRON_GPU_UTIL` (0.40) · `NEMOTRON_SPEC_TOKENS` (3).
+`NEMOTRON_GPU_UTIL` (0.40) · `NEMOTRON_SPEC_TOKENS` (3) ·
+`NEMOTRON_MAX_SEQS` (4 — gleichzeitige Anfragen, der wirksamste Durchsatz-Hebel) ·
+`NEMOTRON_MAX_BATCHED_TOKENS` (16384). Messen: `./llm-bench.sh -p 4`,
+Verlauf im Grafana-Dashboard „AI-Stack — LLM-Leistung" (siehe `docs/LLM_LEISTUNG.md`).
 
 **vLLM-Version:** Nemotron 3.5 Lightning verlangt laut offizieller vLLM-Recipe
 **≥ 0.27.1** — das ist zugleich der aktuelle **stabile** Stand. Ueber `.env` →
