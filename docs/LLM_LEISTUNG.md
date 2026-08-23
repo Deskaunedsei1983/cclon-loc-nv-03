@@ -36,26 +36,34 @@ misst man RAG, Websuche und Sandbox mit) und schreibt Klartext:
 
 ```bash
 ./llm-bench.sh          # 1 Anfrage  -> wie es sich anfühlt (Latenz)
-./llm-bench.sh -p 4     # 4 parallel -> wie der Stack skaliert (Durchsatz)
+./llm-bench.sh -v       # VERGLEICH 1 vs. 4 -> skaliert der Stack überhaupt?
 ./llm-bench.sh -p 8 -t 512
 ```
 
+`-v` ist der wichtigste Aufruf: er misst beides und sagt im Klartext, ob mehr
+Parallelität etwas bringt.
+
 ```
-  Durchsatz GESAMT      1128.2 Token/s      <- zählt bei mehreren Nutzern
-  Tempo je Anfrage       286.4 Token/s      <- so fühlt es sich an
-  Zeit je Token            3.5 ms
-  Wartezeit 1. Token    Mitte 0.15 s   langsamste 0.15 s
-  Spekulation           70 % angenommen   (2.1 Token je Entwurf)
-  KV-Cache              42 %
-  Verdrängungen         0
+  ── Ergebnis (1 parallel) ──────────────────────────────────
+  Durchsatz GESAMT      370.0 Token/s      <- zählt bei mehreren Nutzern
+  Tempo je Anfrage      370.2 Token/s      <- so fühlt es sich an
+  Zeit je Token           2.7 ms
+  Wartezeit 1. Token    Mitte 0.09 s
+  Spekulation           60 % angenommen   (2.4 von 3 Token je Entwurf)
+  KV-Cache (Spitze)       3 %
+  Gleichzeitig aktiv      1
+  Verdrängungen           0
+
+  ── Skalierung 1 -> 4 parallel ─────────────────────────────
+  Durchsatz GESAMT      370.0  ->  410.3 Token/s   (Faktor 1.11)
+  Tempo je Anfrage      370.2  ->  103.8 Token/s
 ```
 
 Darunter steht eine **Einordnung**, die aus den gemessenen Werten die nächste
 Maßnahme nennt. Ein Aufwärmlauf vorab sorgt dafür, dass CUDA-Graphs und
-Prefix-Cache warm sind — sonst misst man den ersten Start mit.
-
-Der entscheidende Vergleich ist `-p 1` gegen `-p 4`: **steigt der
-Gesamt-Durchsatz deutlich**, war die GPU vorher unterfordert.
+Prefix-Cache warm sind — sonst misst man den ersten Start mit. Die Gauges
+(KV-Cache, laufende Anfragen) werden **während** des Laufs abgetastet; danach
+stehen sie wieder auf 0.
 
 ## 2. Grafana-Dashboard „AI-Stack — LLM-Leistung"
 
@@ -83,17 +91,45 @@ curl -s localhost:5568/metrics | grep -oE '^vllm:[a-z_]+' | sort -u
 
 ## 3. Die Maßnahmen
 
-### Mehr Parallelität — der wirksamste Hebel
+### Gemessen: dieser Stack skaliert NICHT mit Parallelität
 
-`--max-num-seqs` stand auf **2**. Bei einer einzelnen laufenden Anfrage arbeitet
-die GPU im ineffizientesten Punkt überhaupt: die Gewichte werden pro Token einmal
-gelesen, **egal für wie viele Anfragen**. Zwei parallele Anfragen teilen sich
-diesen Lesevorgang, vier ebenso — der Gesamtdurchsatz steigt fast linear, während
-die Latenz je Anfrage kaum leidet.
+```
+                    1 Anfrage      4 parallel
+Durchsatz GESAMT    370 Token/s    410 Token/s    (Faktor 1,11)
+Tempo je Anfrage    370 Token/s    104 Token/s
+Zeit je Token       2,7 ms         9,6 ms
+Spekulation         60 % / 2,4     53 % / 2,1
+```
 
-Neu: `NEMOTRON_MAX_SEQS` (Default **4** = eine Hauptanfrage + die drei
-Sub-Agents aus `SUBAGENTS_MAX_CONCURRENT`), analog `VLLM_MAX_SEQS` für die
-Qwen-Profile.
+**370 Token/s im Einzelstrom** ist bereits sehr schnell — Verdienst von A3B
+(nur 3 Mrd. aktive Parameter), NVFP4 und vor allem der spekulativen Dekodierung.
+Und genau deshalb bringt Parallelität nichts mehr: die spekulative Dekodierung
+prüft pro Schritt vier Positionen statt einer und macht aus dem sonst
+speicherlimitierten Decode eine **rechenlastige** Verifikation. Die GPU ist damit
+schon bei *einer* Anfrage gesättigt (`sm 79 %`). Vier Anfragen teilen denselben
+Kuchen: +11 % gesamt, aber jede einzelne wird 3,6-mal langsamer.
+
+Damit ist auch klar, was `NEMOTRON_MAX_SEQS` hier leistet — und was nicht:
+
+* **Nicht** mehr Durchsatz.
+* **Sehr wohl**: Sub-Agents und ein parallel arbeitender Nutzer stehen nicht in
+  der Warteschlange, sondern laufen sofort (langsamer, aber sofort). Deshalb
+  bleibt der Wert bei 4 statt bei 2 — er ist ein Latenz-, kein Durchsatzhebel.
+
+Der verbleibende echte Hebel ist die **spekulative Dekodierung** (siehe unten).
+
+### Wenn die GPU doch Luft hat — Parallelität
+
+Der Vollständigkeit halber, denn nach einem Modell- oder Flag-Wechsel kann das
+Bild anders aussehen: **ohne** spekulative Dekodierung ist Decode rein
+speicherlimitiert. Die Gewichte werden pro Token einmal gelesen, **egal für wie
+viele Anfragen** — parallele Anfragen teilen sich diesen Lesevorgang und der
+Gesamtdurchsatz steigt dann fast linear.
+
+Deshalb ist `--max-num-seqs` konfigurierbar: `NEMOTRON_MAX_SEQS` (Default **4**
+= eine Hauptanfrage + die drei Sub-Agents aus `SUBAGENTS_MAX_CONCURRENT`),
+analog `VLLM_MAX_SEQS` für die Qwen-Profile. `./llm-bench.sh -v` sagt nach jeder
+Änderung, in welchem der beiden Regime man gerade ist.
 
 > **Vorsicht bei Nemotron:** das Modell ist ein Mamba-Hybrid, der SSM-Zustand wird
 > **pro Sequenz-Slot** vorgehalten. Höhere Werte kosten also VRAM — und davon ist
@@ -121,13 +157,26 @@ Kandidaten zum Abschalten, wenn nicht gebraucht (in `COMPOSE_PROFILES`):
 Erst danach lohnt es, `NEMOTRON_GPU_UTIL` zu erhöhen — mehr Anteil bedeutet
 größerer KV-Cache und damit mehr gleichzeitige Gespräche.
 
-### Spekulative Dekodierung nachziehen
+### Spekulative Dekodierung — der verbleibende Hebel
 
-`NEMOTRON_SPEC_TOKENS` steht auf 3. Ob das passt, sagt die **Akzeptanzrate**
-(Dashboard und `llm-bench.sh`):
+`NEMOTRON_SPEC_TOKENS` steht auf 3, gemessene Akzeptanz **60 %** (2,4 von 3
+Token je Entwurf kommen durch). Das ist der Bereich, in dem sich ein Versuch mit
+4 lohnt: jedes zusätzlich akzeptierte Token ist geschenkte Geschwindigkeit, und
+bei gesättigter GPU ist das die einzige Stellschraube, die den Einzelstrom noch
+beschleunigt.
 
-* **> 60 %** — das Entwurfsmodell trifft gut, auf 4–5 erhöhen.
+```bash
+# .env:  NEMOTRON_SPEC_TOKENS=4
+docker compose up -d vllm-main-nemotron
+./llm-bench.sh                      # steigt Token/s? bleibt die Akzeptanz > 50 %?
+```
+
+* **> 55 %** — erhöhen und erneut messen.
 * **< 30 %** — das Raten kostet mehr als es bringt, auf 2 senken.
+
+Die Akzeptanz sinkt mit steigender Tokenzahl (jedes weitere geratene Token muss
+auf allen vorherigen aufbauen). Der Punkt, an dem Token/s wieder fallen, ist das
+Optimum — deshalb messen statt schätzen.
 
 ### Prefill-Bündel
 
