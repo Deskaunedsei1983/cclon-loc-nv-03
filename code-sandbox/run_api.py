@@ -91,9 +91,30 @@ def _chat_dir(session_id: str | None) -> pathlib.Path:
     return d
 
 
-def _resolve(session_id: str | None, raw: str | None, *, must_exist: bool = False) -> pathlib.Path:
-    """Einen vom Client gelieferten Pfad in den Chat-Ordner aufloesen.
-    Absolute Pfade sind erlaubt, muessen aber IM Chat-Ordner liegen."""
+def _inside(child: pathlib.Path, parent: pathlib.Path) -> bool:
+    return child == parent or str(child).startswith(str(parent) + os.sep)
+
+
+def _resolve(session_id: str | None, raw: str | None, *, must_exist: bool = False,
+             scope: str = "session") -> pathlib.Path:
+    """Einen vom Client gelieferten Pfad aufloesen und haerten.
+
+    scope steuert, wie streng geprueft wird:
+      'session' — muss IM Chat-Ordner liegen (alles Schreibende)
+      'volume'  — irgendwo unterhalb des Sandbox-Volumes (Lesen/Download;
+                  der Pfad stammt ohnehin aus einer vorherigen Auflistung)
+      'clamp'   — ausserhalb des Chat-Ordners? Dann still auf den Chat-Ordner
+                  zurueckfallen statt 403.
+
+    'clamp' ist noetig, weil OWUIs FileNav den zuletzt betrachteten Pfad
+    MODULWEIT speichert (`let savedPath` in FileNav.svelte) und ihn beim
+    Anlegen eines Chats mit der NEUEN Chat-ID weiterreicht
+    ("Chat just got created (null -> real ID): persist the current browsed
+    path as the new session's cwd — don't re-fetch"). Der Pfad gehoert dann
+    noch zum vorigen Chat. Ein 403 waere hier eine Sackgasse; wir schwenken
+    stattdessen auf den richtigen Ordner.
+    """
+    volume = pathlib.Path(os.path.realpath(WORK))
     root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
     p = (raw or "").strip()
     if not p or p in ("/", ".", "./"):
@@ -102,8 +123,14 @@ def _resolve(session_id: str | None, raw: str | None, *, must_exist: bool = Fals
         cand = pathlib.Path(p)
         target = cand if cand.is_absolute() else (root / p)
     real = pathlib.Path(os.path.realpath(target))
-    if real != root and not str(real).startswith(str(root) + os.sep):
-        raise HTTPException(status_code=403, detail="Pfad ausserhalb des Chat-Ordners")
+
+    if not _inside(real, volume):
+        raise HTTPException(status_code=403, detail="Pfad ausserhalb des Sandbox-Volumes")
+    if scope != "volume" and not _inside(real, root):
+        if scope == "clamp":
+            real = root
+        else:
+            raise HTTPException(status_code=403, detail="Pfad ausserhalb des Chat-Ordners")
     if must_exist and not real.exists():
         raise HTTPException(status_code=404, detail="Nicht gefunden")
     return real
@@ -267,7 +294,9 @@ async def files_cwd(session_id: str = Depends(_auth)):
 
 @app.post("/files/cwd", include_in_schema=False)
 async def files_setcwd(req: CwdReq, session_id: str = Depends(_auth)):
-    target = _resolve(session_id, req.path)
+    # clamp: FileNav schiebt beim Anlegen eines Chats den Pfad des VORIGEN
+    # Chats herueber — der landet dann still im richtigen Ordner.
+    target = _resolve(session_id, req.path, scope="clamp")
     if target.is_dir():
         _CWD[session_id or ""] = str(target)
     return {"cwd": str(target)}
@@ -275,7 +304,7 @@ async def files_setcwd(req: CwdReq, session_id: str = Depends(_auth)):
 
 @app.get("/files/list", include_in_schema=False)
 async def files_list(directory: str = "/", session_id: str = Depends(_auth)):
-    target = _resolve(session_id, directory, must_exist=True)
+    target = _resolve(session_id, directory, must_exist=True, scope="clamp")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail="Kein Verzeichnis")
     entries = [_entry(p) for p in target.iterdir() if _visible(p)]
@@ -285,7 +314,9 @@ async def files_list(directory: str = "/", session_id: str = Depends(_auth)):
 
 @app.get("/files/read", include_in_schema=False)
 async def files_read(path: str, session_id: str = Depends(_auth)):
-    target = _resolve(session_id, path, must_exist=True)
+    # 'volume': der Pfad stammt aus einer vorherigen Auflistung; ein 403 nach
+    # einem Chatwechsel waere nur eine Sackgasse. Schreiben bleibt Chat-lokal.
+    target = _resolve(session_id, path, must_exist=True, scope="volume")
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Ist ein Verzeichnis")
     if target.stat().st_size > READ_MAX_BYTES:
@@ -301,7 +332,7 @@ async def files_read(path: str, session_id: str = Depends(_auth)):
 
 @app.get("/files/view", include_in_schema=False)
 async def files_view(path: str, session_id: str = Depends(_auth)):
-    target = _resolve(session_id, path, must_exist=True)
+    target = _resolve(session_id, path, must_exist=True, scope="volume")
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Ist ein Verzeichnis")
     size = target.stat().st_size
@@ -328,7 +359,7 @@ async def files_archive(req: ArchiveReq, session_id: str = Depends(_auth)):
     """Mehrere Dateien/Ordner als ZIP — so laedt man in OWUI eine Auswahl auf
     einmal herunter (der Grund, warum viele Dateien in einem Chat frueher
     unuebersichtlich waren)."""
-    targets = [_resolve(session_id, p, must_exist=True) for p in (req.paths or [])]
+    targets = [_resolve(session_id, p, must_exist=True, scope="volume") for p in (req.paths or [])]
     if not targets:
         raise HTTPException(status_code=400, detail="Keine Pfade")
     buf = io.BytesIO()

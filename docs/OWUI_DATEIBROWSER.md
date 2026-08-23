@@ -66,6 +66,47 @@ Neu entstandene oder geänderte Dateien erkennt die Sandbox per Snapshot-Verglei
 (vorher/nachher), das Skript selbst liegt versteckt als `.snippet_<id>.py` und
 wird nach dem Lauf gelöscht.
 
+### Stale Pfade: warum es keine 403-Sackgasse gibt
+
+`FileNav.svelte` merkt sich den zuletzt betrachteten Pfad **modulweit**
+(`<script context="module"> let savedPath`) — also über Chatwechsel hinweg. Bekommt
+ein neuer Chat seine ID, schiebt FileNav diesen alten Pfad mit der **neuen**
+Chat-ID an den Server:
+
+```js
+// Chat just got created (null → real ID): persist the current
+// browsed path as the new session's cwd — don't re-fetch.
+setCwd(terminal.url, terminal.key, savedPath, chatId);
+```
+
+Der Pfad gehört dann noch zum vorigen Chat (oder zu `_ohne_chat`). Eine strenge
+Prüfung gegen den Chat-Ordner beantwortet das mit **403** — und die Seitenleiste
+bleibt leer stehen. Genau das ist anfangs passiert:
+
+```
+GET  /files/list?directory=/home/sandbox/work/_ohne_chat/  403 Forbidden
+POST /files/cwd                                            403 Forbidden
+```
+
+Deshalb prüft `_resolve()` jetzt in drei Stufen:
+
+| Operation | Scope | Verhalten außerhalb des Chat-Ordners |
+|---|---|---|
+| `list`, `POST cwd` | `clamp` | schwenkt still auf den Chat-Ordner |
+| `read`, `view`, `archive` | `volume` | erlaubt (der Pfad stammt aus einer Auflistung) |
+| `upload`, `mkdir`, `move`, `delete` | `session` | **403** — Schreiben bleibt chat-lokal |
+
+Außerhalb des Sandbox-Volumes bleibt **alles** hart bei 403.
+
+### Seitenleiste öffnet sich von selbst
+
+Der Filter `sandbox_files.py` sendet nach der Antwort das Event
+`terminal:display_file` mit dem Sandbox-Pfad der zuletzt erzeugten Datei.
+`Chat.svelte → terminalEventHandler → displayFileHandler` setzt daraufhin
+`showControls` und `showFileNavPath`; `ChatControls` schaltet auf den Reiter
+**Files** und `FileNav` öffnet den Ordner samt Vorschau. Abschaltbar über die
+Valve `open_file_nav`.
+
 ### Sicherheit
 
 * Die Datei-API ist **ohne `SANDBOX_FILES_TOKEN` komplett aus** (401).

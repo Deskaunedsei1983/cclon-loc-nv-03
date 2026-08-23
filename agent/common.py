@@ -1023,8 +1023,14 @@ def reset_run_files(body: dict | None = None) -> None:
     und die Chat-ID aus dem OWUI-Body uebernehmen."""
     global _CHAT_ID
     _RUN_FILES.clear()
-    cid = ((body or {}).get("metadata") or {}).get("chat_id") or ""
+    b = body or {}
+    # OWUI liefert die Chat-ID in metadata; manche Aufrufer setzen sie flach.
+    cid = (b.get("metadata") or {}).get("chat_id") or b.get("chat_id") or ""
     _CHAT_ID = str(cid) if cid else ""
+    if not _CHAT_ID:
+        # Ohne ID landen die Dateien im Sammelordner '_ohne_chat' — dann zeigt
+        # die OWUI-Seitenleiste sie nicht unter dem Chat an.
+        log.debug("Keine chat_id im Request -> Sandbox-Dateien ohne Chat-Zuordnung")
 
 
 def run_files_block() -> str:

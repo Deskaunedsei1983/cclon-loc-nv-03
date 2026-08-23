@@ -89,6 +89,15 @@ class Filter:
             default="/sandbox-work",
             description="Mountpoint des Sandbox-Volumes in OWUI (read-only). "
                         "Grosse Dateien werden von hier gelesen statt base64 transportiert.")
+        sandbox_path: str = Field(
+            default="/home/sandbox/work",
+            description="Derselbe Ordner AUS SICHT der Sandbox. Wird gebraucht, um "
+                        "den Datei-Browser (rechte Seitenleiste) auf die neue Datei "
+                        "zu schicken — der spricht Sandbox-Pfade.")
+        open_file_nav: bool = Field(
+            default=True,
+            description="Nach der Antwort den Datei-Browser oeffnen und die zuletzt "
+                        "erzeugte Datei anzeigen (Event 'terminal:display_file').")
         keep_marker: bool = Field(
             default=False, description="Anhang-Block im Text stehen lassen (Debug)")
 
@@ -146,9 +155,11 @@ class Filter:
             return (fid, size) if ok else None
         return r
 
-    async def outlet(self, body: dict, __user__: dict | None = None, **kwargs) -> dict:
+    async def outlet(self, body: dict, __user__: dict | None = None,
+                     __event_emitter__=None, **kwargs) -> dict:
         if not self.valves.enabled:
             return body
+        last_sandbox_path = None
         try:
             msgs = body.get("messages") or []
             if not msgs:
@@ -170,6 +181,7 @@ class Filter:
                 name = it.get("name") or "datei"
                 ctype = it.get("content_type") or "application/octet-stream"
                 raw = b""
+                cur_sandbox_path = None
                 if it.get("b64"):
                     # Kleine Datei: kam base64 durch die Chat-Antwort.
                     try:
@@ -185,6 +197,9 @@ class Filter:
                     if not (p == root or p.startswith(root + os.sep)):
                         log.warning("sandbox_files: Pfad ausserhalb %s abgelehnt: %s", root, p)
                         continue
+                    # Denselben Pfad aus Sicht der SANDBOX merken — der
+                    # Datei-Browser spricht Sandbox-Pfade, nicht Mount-Pfade.
+                    cur_sandbox_path = self.valves.sandbox_path.rstrip("/") + p[len(root):]
                     try:
                         if os.path.getsize(p) > limit:
                             log.warning("sandbox_files: '%s' > %d MB -> uebersprungen",
@@ -212,6 +227,8 @@ class Filter:
                     "collection_name": None,
                 })
                 links.append(f"[{name} ({_hr(size)})](/api/v1/files/{fid}/content)")
+                if cur_sandbox_path:
+                    last_sandbox_path = cur_sandbox_path
                 log.info("sandbox_files: '%s' (%d B) angehaengt", name, size)
 
             if attached:
@@ -231,6 +248,21 @@ class Filter:
         except Exception:
             # Niemals den Chat blockieren.
             log.exception("sandbox_files: outlet uebersprungen (Fehler)")
+
+        # Datei-Browser (rechte Seitenleiste) auf die zuletzt erzeugte Datei
+        # schicken. OWUI 0.11.0: Chat.svelte -> terminalEventHandler ->
+        # 'terminal:display_file' -> displayFileHandler -> showControls=true +
+        # showFileNavPath -> ChatControls schaltet auf den Reiter "Files" und
+        # FileNav oeffnet den Ordner samt Vorschau. Braucht einen im Modell
+        # verknuepften Terminal-Server; ohne den passiert schlicht nichts.
+        if self.valves.open_file_nav and last_sandbox_path and __event_emitter__:
+            try:
+                await __event_emitter__({
+                    "type": "terminal:display_file",
+                    "data": {"path": last_sandbox_path},
+                })
+            except Exception as e:
+                log.debug("sandbox_files: display_file-Event nicht zustellbar: %s", e)
         return body
 
     async def inlet(self, body: dict, **kwargs) -> dict:
