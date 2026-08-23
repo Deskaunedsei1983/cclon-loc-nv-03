@@ -351,6 +351,47 @@ def artifact_hint(name: str) -> str:
     )
 
 
+#  Aus der ANFRAGE abgeleiteter Artefakt-Auftrag (ohne Upload). Ohne ihn schreibt
+#  das Modell "erstelle ein Jupyter-Notebook" gern als Code in die Antwort, statt
+#  eine Datei anzulegen — es gibt dann ja keine Datei, auf die es sich bezieht.
+_CREATE_VERB_RE = re.compile(
+    r"\b(erstell|schreib|generier|bau\b|baue|erzeug|entwirf|entwickle|leg\s+an|"
+    r"mach\s+mir|create|write|generate|build)", re.IGNORECASE)
+
+_ARTIFACT_WORDS: "list[tuple[tuple[str, ...], str, str, str]]" = [
+    (("notebook", "jupyter", "ipynb"), "ein Jupyter-Notebook", "nbformat", "notebook.ipynb"),
+    (("excel", "xlsx", "arbeitsmappe", "tabellenblatt"), "eine Excel-Mappe",
+     "xlsxwriter oder openpyxl", "auswertung.xlsx"),
+    (("word", "docx"), "ein Word-Dokument", "python-docx", "bericht.docx"),
+    (("powerpoint", "pptx", "praesentation", "präsentation", "folien"),
+     "eine Praesentation", "python-pptx", "praesentation.pptx"),
+    (("pdf",), "ein PDF", "reportlab", "bericht.pdf"),
+    (("csv",), "eine CSV-Datei", "polars", "daten.csv"),
+    (("python-skript", "python skript", "skript", "script"), "ein Python-Skript",
+     "open()", "skript.py"),
+]
+
+
+def artifact_request_hint(query: str) -> str:
+    """Verlangt die ANFRAGE selbst eine Datei? Dann sagen, dass sie geschrieben
+    (und geprueft) werden muss — nicht in die Antwort kopiert."""
+    q = (query or "").lower()
+    if not _CREATE_VERB_RE.search(q):
+        return ""
+    for words, kind, lib, beispiel in _ARTIFACT_WORDS:
+        if any(w in q for w in words):
+            return (
+                f"ARTEFAKT-AUFTRAG: Die Anfrage verlangt eine DATEI ({kind}). "
+                f"Erzeuge sie mit 'run_code' ({lib}) im Arbeitsverzeichnis, "
+                f"z.B. '{beispiel}'. Der Inhalt gehoert NICHT in die Antwort — dort "
+                f"stehen nur eine kurze Beschreibung und der Dateiname. "
+                f"Pruefe im selben oder einem zweiten 'run_code'-Lauf, dass die Datei "
+                f"existiert und fehlerfrei ladbar ist, und gib ihre Groesse aus. "
+                f"Ohne ausgefuehrtes 'run_code' gibt es keine Datei zum Herunterladen."
+            )
+    return ""
+
+
 def system_prompt_now() -> str:
     """SYSTEM_PROMPT + frischer Zeitbezug. In den Agenten IMMER statt des rohen
     SYSTEM_PROMPT verwenden, damit das Datum pro Anfrage stimmt."""
@@ -1190,6 +1231,75 @@ def run_files_block() -> str:
     names = ", ".join(f"{i['name']} ({_hr(i.get('size'))})" for i in items)
     human = f"\n\n**Erzeugte Dateien:** {names}"
     return f"{human}\n\n{FILES_MARK_BEGIN}\n{_json.dumps(items)}\n{FILES_MARK_END}\n"
+
+
+# --- Rettungsnetz: grosser Code-Block in der Antwort, aber keine Datei --------
+_FENCE_RE = re.compile(r"```([A-Za-z0-9_+.-]*)[ \t]*\r?\n(.*?)```", re.DOTALL)
+# Ab dieser Groesse ist ein Block kein Beispiel mehr, sondern der Dateiinhalt.
+SALVAGE_MIN_CHARS = int(os.environ.get("SALVAGE_MIN_CHARS", "1500"))
+SALVAGE_ENABLED = os.environ.get("SALVAGE_CODE_BLOCKS", "true").lower() == "true"
+
+_LANG_EXT = {"python": ".py", "py": ".py", "json": ".json", "csv": ".csv",
+             "sql": ".sql", "markdown": ".md", "md": ".md", "yaml": ".yaml",
+             "yml": ".yaml", "html": ".html", "xml": ".xml", "sh": ".sh",
+             "bash": ".sh", "text": ".txt", "": ".txt"}
+
+
+def _salvage_name(lang: str, body: str, idx: int) -> str:
+    """Dateiname fuer einen geretteten Block. Ein Notebook wird am JSON erkannt."""
+    lang = (lang or "").lower()
+    if lang in ("json", "ipynb", ""):
+        # 'nbformat' steht oft ganz am Ende des JSON -> im ganzen Block suchen.
+        if body.lstrip().startswith("{") and '"cells"' in body and '"nbformat"' in body:
+            return f"notebook{'' if idx == 0 else f'_{idx + 1}'}.ipynb"
+    ext = _LANG_EXT.get(lang, ".txt")
+    stem = {".py": "skript", ".json": "daten", ".csv": "daten", ".sql": "abfrage",
+            ".md": "dokument"}.get(ext, "ausgabe")
+    return f"{stem}{'' if idx == 0 else f'_{idx + 1}'}{ext}"
+
+
+async def salvage_code_blocks(http: httpx.AsyncClient, answer: str) -> str:
+    """Hat der Agent KEINE Datei erzeugt, steht aber ein grosser Code-/JSON-Block
+    in der Antwort, dann ist das der Dateiinhalt am falschen Ort. Wir legen die
+    Datei nachtraeglich im Chat-Ordner an und ersetzen den Block durch einen
+    Hinweis — sonst haette der Nutzer nur Text zum Kopieren.
+    Kleine Bloecke (Beispiele, Ausschnitte) bleiben unangetastet."""
+    if not (SALVAGE_ENABLED and answer) or _RUN_FILES or not _files_api_headers():
+        return answer
+    blocks = [(m, m.group(1), m.group(2)) for m in _FENCE_RE.finditer(answer)]
+    big = [(m, lang, body) for m, lang, body in blocks if len(body) >= SALVAGE_MIN_CHARS]
+    if not big:
+        return answer
+
+    out, last, idx = [], 0, 0
+    for m, lang, body in big:
+        name = _salvage_name(lang, body, idx)
+        data = body.encode("utf-8")
+        try:
+            real = await _put_into_chat_folder(http, name, data)
+        except Exception as e:
+            log.warning("Rettungsnetz: '%s' nicht speicherbar: %s", name, e)
+            continue
+        if not real:
+            continue
+        if real.startswith(SANDBOX_WORK_PREFIX):
+            mounted = SANDBOX_WORK_MOUNT + real[len(SANDBOX_WORK_PREFIX):]
+            _RUN_FILES[name] = {"content_type": _guess_ctype(name),
+                                "path": mounted, "size": len(data)}
+        else:
+            _RUN_FILES[name] = {"content_type": _guess_ctype(name),
+                                "b64": base64.b64encode(data).decode("ascii"),
+                                "size": len(data)}
+        log.info("Rettungsnetz: Code-Block aus der Antwort als '%s' gespeichert (%d B)",
+                 name, len(data))
+        out.append(answer[last:m.start()])
+        out.append(f"_(Inhalt als Datei gespeichert: **{name}**, {len(data)} Zeichen)_")
+        last = m.end()
+        idx += 1
+    if not out:
+        return answer
+    out.append(answer[last:])
+    return "".join(out)
 
 
 async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = None) -> str:

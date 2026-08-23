@@ -90,6 +90,33 @@ Zusätzlich blendet die API `document.txt` aus (`SANDBOX_HIDE_NAMES`) — das is
 die Textfassung des Uploads für den Volltext-Modus, im Browser nur Rauschen;
 die Originaldatei liegt unter ihrem echten Namen daneben.
 
+**Frisch geöffneter Chat:** FileNav öffnet sich, bevor der Chat eine ID hat
+(`chatId` ist dann `null`, der Header `X-Session-Id` fehlt). Die Datei-API
+liefert in diesem Fall einen **leeren** Ordner statt des Sammelordners
+`_ohne_chat` — sonst sähe man dort die Reste aller unzugeordneten Läufe. Auf der
+Platte bleibt `_ohne_chat` bestehen, der Agent schreibt dorthin, falls ihm die
+ID fehlt (mit Warnung im Log).
+
+### Aus „erstelle ein Notebook“ wird eine Datei, kein Chat-Text
+
+Ohne Upload gab es bisher gar keine Steuerung: das Modell schrieb den Code in
+die Antwort, und in der Seitenleiste blieb es leer. Zwei Mechanismen greifen
+jetzt (beide in `agent/common.py`, Tests unter `agent/tests/`):
+
+1. **`artifact_request_hint(query)`** — erkennt an der Anfrage selbst, dass eine
+   Datei verlangt ist (Verb *erstelle/schreibe/generiere/…* plus
+   *Notebook/Excel/Word/PowerPoint/PDF/CSV/Skript*), und hängt einen konkreten
+   Auftrag an den Request: mit welcher Bibliothek, unter welchem Dateinamen, und
+   dass nach dem Schreiben geprüft werden soll, dass die Datei ladbar ist. Bei
+   „was ist ein Jupyter-Notebook?“ passiert nichts.
+2. **`salvage_code_blocks(answer)`** — das Netz. Hat der Agent trotzdem keine
+   Datei erzeugt, steht aber ein Block ≥ `SALVAGE_MIN_CHARS` (Default 1500) in
+   der Antwort, dann ist das der Dateiinhalt am falschen Ort: er wird im
+   Chat-Ordner gespeichert und im Text durch einen Hinweis ersetzt.
+   Notebook-JSON wird am Inhalt erkannt (`"cells"` + `"nbformat"` → `.ipynb`),
+   kleine Beispielblöcke bleiben inline. Abschaltbar mit
+   `SALVAGE_CODE_BLOCKS=false`.
+
 ### Stale Pfade: warum es keine 403-Sackgasse gibt
 
 `FileNav.svelte` merkt sich den zuletzt betrachteten Pfad **modulweit**

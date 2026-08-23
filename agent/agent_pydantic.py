@@ -116,11 +116,16 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
         # Soll eine DATEI ueberarbeitet werden, muss auch eine Datei herauskommen —
         # sonst landet der komplette Inhalt (z.B. Notebook-JSON) im Chat.
         parts.append(C.artifact_hint(name))
+    # Verlangt schon die Anfrage selbst eine Datei (ohne Upload)? Dann sagen,
+    # dass sie geschrieben werden muss — sonst kommt der Inhalt als Chat-Text.
+    parts.append(C.artifact_request_hint(query))
     parts.append(f"Aktuelle Anfrage:\n{query}")
     prompt = "\n".join(p for p in parts if p)
     async with httpx.AsyncClient() as http:
         result = await _agent.run(prompt, deps=Deps(http=http, fulltext=fulltext, only_doc=only_doc))
-    answer = _result_text(result)
+        answer = _result_text(result)
+        # Netz: grosser Code-Block in der Antwort, aber keine Datei erzeugt.
+        answer = await C.salvage_code_blocks(http, answer)
     C.mem_add(_memory, query, answer, user_id)
     # Sandbox-Dateien anhaengen (siehe agent_langgraph) — nach mem_add.
     return answer + C.run_files_block()

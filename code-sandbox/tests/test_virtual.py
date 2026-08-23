@@ -85,5 +85,17 @@ for bad in ["../../etc/passwd", "/etc/passwd", "/unter/../../.."]:
     r = c.get("/files/read", headers=HA, params={"path": bad})
     check(f"Ausbruch blockiert: {bad}", r.status_code in (403, 404), r.status_code)
 
+# --- Frisch geoeffneter Chat: noch keine ID -> LEERE Ansicht ---------------
+HN = {"Authorization": "Bearer geheim123"}          # ohne X-Session-Id
+c.post("/run", json={"code": "open('rest.csv','w').write('alt\\n')"})   # landet in _ohne_chat
+j = c.get("/files/list", headers=HN, params={"directory": "/"}).json()
+check("neuer Chat ohne ID sieht NICHTS", j["entries"] == [] and j["path"] == "/", j)
+check("cwd ohne ID virtuell", c.get("/files/cwd", headers=HN).json()["root"]["path"] == "/",
+      c.get("/files/cwd", headers=HN).json())
+check("_ohne_chat existiert weiter auf der Platte (fuer den Agenten)",
+      os.path.isfile(os.path.join(WORK, "_ohne_chat", "rest.csv")))
+check("_ohne_chat ist nicht browsbar",
+      "rest.csv" not in [e["name"] for e in c.get("/files/list", headers=HN, params={"directory": "/"}).json()["entries"]])
+
 print("\n" + ("VIRTUELLE PFADE OK" if ok else "FEHLER"))
 sys.exit(0 if ok else 1)

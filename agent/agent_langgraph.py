@@ -170,6 +170,9 @@ async def draft(state: State) -> State:
         hint = C.artifact_hint(state.get("fulldoc_name", ""))
         if hint:
             parts.append("\n" + hint)
+    req_hint = C.artifact_request_hint(state.get("query", ""))
+    if req_hint:
+        parts.append("\n" + req_hint)
     parts.append("\nBrauchst du eine Berechnung/Datei, gib EINEN ```python ...``` Block aus; "
                  "er wird in der Sandbox ausgefuehrt.")
     sys = _SYS_ORCHESTRATED + "\n\nAKTUELLER ZEITBEZUG (WICHTIG)\n" + C.now_context()
@@ -332,6 +335,9 @@ async def run_agent(messages: list[dict], user_id: str = "owui",
         answer += f"\n\n---\nWeb-Gegenpruefung:\n{final['verification']}"
     if final.get("exec_out"):
         answer += f"\n\n---\nAusfuehrungsergebnis:\n{final['exec_out']}"
+    # Netz: grosser Code-Block in der Antwort, aber keine Datei erzeugt.
+    async with httpx.AsyncClient() as _http:
+        answer = await C.salvage_code_blocks(_http, answer)
     C.mem_add(_memory, query, answer, user_id)
     # In der Sandbox erzeugte Dateien anhaengen (unsichtbarer Block -> OWUI-Filter
     # macht daraus Download-Chips). NACH mem_add, damit kein base64 ins Gedaechtnis geht.

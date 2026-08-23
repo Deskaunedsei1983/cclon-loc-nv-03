@@ -91,6 +91,24 @@ def _chat_dir(session_id: str | None) -> pathlib.Path:
     return d
 
 
+def _files_root(session_id: str | None) -> pathlib.Path:
+    """Wurzel fuer die DATEI-API (nicht fuer /run).
+
+    Ohne Chat-ID einen LEEREN, versteckten Ordner statt des Sammelordners
+    '_ohne_chat': OWUIs FileNav oeffnet sich in einem frisch angelegten Chat
+    schon, bevor der Chat eine ID hat (`chatId` ist dann null, der Header
+    X-Session-Id fehlt). Mit '_ohne_chat' als Wurzel saehe der Nutzer dort die
+    Reste aller Anfragen ohne Zuordnung — ein leerer Ordner ist ehrlicher.
+    Der Agent schreibt weiterhin nach '_ohne_chat', falls ihm die ID fehlt; das
+    meldet er dann als Warnung im Log.
+    """
+    if not (session_id or "").strip():
+        d = WORK / ".ohne_sitzung"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    return _chat_dir(session_id)
+
+
 def _inside(child: pathlib.Path, parent: pathlib.Path) -> bool:
     return child == parent or str(child).startswith(str(parent) + os.sep)
 
@@ -127,7 +145,7 @@ def _resolve(session_id: str | None, raw: str | None, *, must_exist: bool = Fals
                   (Auflisten und cwd — dort waere ein 403 nur eine Sackgasse)
     """
     volume = pathlib.Path(os.path.realpath(WORK))
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     p = (raw or "").strip()
     # Alt-Client: absoluter Container-Pfad -> auf den virtuellen Anteil kuerzen.
     for prefix in (str(root), str(volume)):
@@ -311,7 +329,7 @@ class CwdReq(BaseModel):
 
 @app.get("/files/cwd", include_in_schema=False)
 async def files_cwd(session_id: str = Depends(_auth)):
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     saved = _CWD.get(session_id or "")
     cwd = saved if saved and os.path.isdir(root / saved.lstrip("/")) else "/"
     # root.path='/' -> FileNav kann nicht hoeher navigieren als in diesen Chat.
@@ -322,7 +340,7 @@ async def files_cwd(session_id: str = Depends(_auth)):
 async def files_setcwd(req: CwdReq, session_id: str = Depends(_auth)):
     # clamp: FileNav schiebt beim Anlegen eines Chats den Pfad des VORIGEN
     # Chats herueber — der landet dann still im richtigen Ordner.
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     target = _resolve(session_id, req.path, scope="clamp")
     # Zeigt der Pfad ins Leere (Ordner eines anderen Chats, geloeschter Ordner),
     # NICHT den alten Stand behalten, sondern sauber auf den Chat-Ordner setzen.
@@ -333,7 +351,7 @@ async def files_setcwd(req: CwdReq, session_id: str = Depends(_auth)):
 
 @app.get("/files/list", include_in_schema=False)
 async def files_list(directory: str = "/", session_id: str = Depends(_auth)):
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     target = _resolve(session_id, directory, must_exist=True, scope="clamp")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail="Kein Verzeichnis")
@@ -344,7 +362,7 @@ async def files_list(directory: str = "/", session_id: str = Depends(_auth)):
 
 @app.get("/files/read", include_in_schema=False)
 async def files_read(path: str, session_id: str = Depends(_auth)):
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     target = _resolve(session_id, path, must_exist=True)
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Ist ein Verzeichnis")
@@ -412,7 +430,7 @@ async def files_archive(req: ArchiveReq, session_id: str = Depends(_auth)):
 @app.post("/files/upload", include_in_schema=False)
 async def files_upload(directory: str = "/", file: UploadFile = File(...),
                        session_id: str = Depends(_auth)):
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     target_dir = _resolve(session_id, directory, must_exist=True)
     if not target_dir.is_dir():
         raise HTTPException(status_code=400, detail="Kein Verzeichnis")
@@ -437,7 +455,7 @@ class PathReq(BaseModel):
 
 @app.post("/files/mkdir", include_in_schema=False)
 async def files_mkdir(req: PathReq, session_id: str = Depends(_auth)):
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     target = _resolve(session_id, req.path)
     target.mkdir(parents=True, exist_ok=True)
     return {"path": _virt(target, root)}
@@ -445,7 +463,7 @@ async def files_mkdir(req: PathReq, session_id: str = Depends(_auth)):
 
 @app.delete("/files/delete", include_in_schema=False)
 async def files_delete(path: str, session_id: str = Depends(_auth)):
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     target = _resolve(session_id, path, must_exist=True)
     if target == root:
         raise HTTPException(status_code=400, detail="Der Chat-Ordner selbst wird nicht geloescht")
@@ -463,7 +481,7 @@ class MoveReq(BaseModel):
 
 @app.post("/files/move", include_in_schema=False)
 async def files_move(req: MoveReq, session_id: str = Depends(_auth)):
-    root = pathlib.Path(os.path.realpath(_chat_dir(session_id)))
+    root = pathlib.Path(os.path.realpath(_files_root(session_id)))
     src = _resolve(session_id, req.source, must_exist=True)
     dst = _resolve(session_id, req.destination)
     if dst.is_dir():
