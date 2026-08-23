@@ -111,6 +111,29 @@ if [ -f searxng/settings.yml ]; then
   echo "   + searxng/settings.yml -> searxng/runtime/ gespiegelt"
 fi
 
+# --- Datei-Browser in OWUIs rechter Seitenleiste -----------------------------
+#  OWUI blendet den Reiter "Files" nur fuer einen konfigurierten TERMINAL-Server
+#  ein. Unsere code-sandbox liefert dessen Datei-API (/files/*) und meldet
+#  features.terminal=false -> Browser/Vorschau/Download, aber keine Shell.
+#  Beide Werte muessen zusammenpassen (Bearer-Token), darum hier gemeinsam
+#  erzeugt, falls sie in der .env fehlen.
+if [ -f .env ]; then
+  if ! grep -qE '^[[:space:]]*SANDBOX_FILES_TOKEN=[^[:space:]]' .env; then
+    _sft="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    printf '\n# Bearer-Token zwischen OWUI und der code-sandbox-Datei-API (automatisch erzeugt)\nSANDBOX_FILES_TOKEN=%s\n' "$_sft" >> .env
+    echo "   + SANDBOX_FILES_TOKEN in .env erzeugt"
+  else
+    _sft="$(grep -E '^[[:space:]]*SANDBOX_FILES_TOKEN=' .env | tail -n1 | cut -d= -f2- | tr -d "\"' ")"
+  fi
+  if ! grep -qE '^[[:space:]]*OWUI_TERMINAL_SERVERS=[^[:space:]]' .env; then
+    printf '# Datei-Browser (rechte Seitenleiste) -> code-sandbox. Automatisch erzeugt.\nOWUI_TERMINAL_SERVERS=[{"id":"sandbox","name":"Chat-Dateien","url":"http://code-sandbox:8000","key":"%s","auth_type":"bearer","enabled":true}]\n' "$_sft" >> .env
+    echo "   + OWUI_TERMINAL_SERVERS in .env erzeugt (Datei-Browser rechte Seitenleiste)"
+    echo "     ! Bestehende OWUI-Installation: OWUI uebernimmt die Variable nur beim"
+    echo "       ERSTEN Start. Sonst unter Admin -> Einstellungen -> Integrations ->"
+    echo "       Terminal Servers eintragen (siehe docs/OWUI_DATEIBROWSER.md)."
+  fi
+fi
+
 COMPOSE_FILES=(-f docker-compose.yml)
 
 # --- Zentrales Logging/Observability (Loki+Grafana+Dozzle+Promtail) ----------
@@ -534,6 +557,28 @@ check_internal() {
       printf "     [ PRUEF] %-16s (%s%s) -> docker logs --tail=40 %s\n" "$name" "$st" "${hs:+/$hs}" "$cn"
     fi
   done
+
+  # Datei-Browser der rechten OWUI-Seitenleiste: die Sandbox liefert dafuer eine
+  # Datei-API und meldet features.terminal=false (Browser ja, Shell nein).
+  if docker inspect code_sandbox >/dev/null 2>&1; then
+    local fb
+    fb="$(docker exec code_sandbox python3 -c "
+import json, os, urllib.request
+t = os.environ.get('SANDBOX_FILES_TOKEN', '')
+if not t:
+    print('AUS')
+else:
+    req = urllib.request.Request('http://127.0.0.1:8000/api/config',
+                                 headers={'Authorization': 'Bearer ' + t})
+    d = json.load(urllib.request.urlopen(req, timeout=5))
+    print('OK' if d.get('features', {}).get('terminal') is False else 'UNERWARTET')
+" 2>/dev/null)"
+    case "$fb" in
+      OK)  printf "     [ OK   ] %-16s (Dateien je Chat in OWUIs rechter Seitenleiste)\n" "Datei-Browser" ;;
+      AUS) printf "     [ AUS  ] %-16s (SANDBOX_FILES_TOKEN fehlt -> siehe docs/OWUI_DATEIBROWSER.md)\n" "Datei-Browser" ;;
+      *)   printf "     [ PRUEF] %-16s -> docker logs --tail=40 code_sandbox\n" "Datei-Browser" ;;
+    esac
+  fi
 }
 
 echo "================================================================"

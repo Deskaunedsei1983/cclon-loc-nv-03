@@ -189,6 +189,12 @@ SANDBOX_RUN_URL = os.environ.get("SANDBOX_RUN_URL", "http://code-sandbox:8000/ru
 # microVM-Executor (Microsandbox). Default: Host-Dienst via host.docker.internal.
 # Container-Variante: http://microsandbox-executor:8077/run
 MSB_EXECUTOR_URL = os.environ.get("MSB_EXECUTOR_URL", "http://host.docker.internal:8077/run")
+# Datei-API der Sandbox (= Quelle fuer OWUIs Datei-Browser in der rechten
+# Seitenleiste). Laeuft die Ausfuehrung in der microVM, liegen die Ergebnisse
+# NICHT im Chat-Ordner der Sandbox -> wir spiegeln sie dorthin, damit die
+# Seitenleiste unabhaengig von der Engine immer alle Dateien des Chats zeigt.
+SANDBOX_FILES_URL = os.environ.get("SANDBOX_FILES_URL", "http://code-sandbox:8000")
+SANDBOX_FILES_TOKEN = os.environ.get("SANDBOX_FILES_TOKEN", "")
 
 # Volltext-Modus: OWUIs Upload-Volume read-only gemountet -> ganze Dateien lesbar
 # (umgeht den OWUI-0.9.5-401). OWUI legt Uploads unter <data>/uploads/{id}_{name} ab.
@@ -927,13 +933,45 @@ def schedule_ingest(body: dict) -> None:
 
 
 # --- Code-Sandbox -----------------------------------------------------------
-async def _post_run(http: httpx.AsyncClient, url: str, code: str, files: dict | None = None) -> dict:
+async def _post_run(http: httpx.AsyncClient, url: str, code: str, files: dict | None = None,
+                    chat_id: str = "") -> dict:
     payload = {"code": code}
     if files:
         payload["files"] = files
+    # Chat-ID nur an die eigene Sandbox: sie arbeitet dann in <work>/chat_<id>/ —
+    # dadurch sieht ein Folgelauf im selben Chat die Dateien des vorherigen Laufs,
+    # und OWUIs Datei-Browser (rechte Seitenleiste) zeigt genau diesen Ordner.
+    if chat_id:
+        payload["chat_id"] = chat_id
     r = await http.post(url, json=payload, timeout=180.0)
     r.raise_for_status()
     return r.json()
+
+
+async def _mirror_to_chat_folder(http: httpx.AsyncClient, chat_id: str, files: list) -> dict:
+    """Dateien aus einem NICHT-lokalen Lauf (microVM) in den Chat-Ordner der
+    Sandbox legen. Damit zeigt OWUIs Datei-Browser (rechte Seitenleiste) immer
+    alle Dateien des Chats — egal welche Engine sie erzeugt hat.
+    Liefert {name: pfad_in_der_sandbox} fuer die erfolgreich gespiegelten."""
+    if not (chat_id and SANDBOX_FILES_TOKEN and SANDBOX_FILES_URL):
+        return {}
+    out: dict[str, str] = {}
+    headers = {"Authorization": f"Bearer {SANDBOX_FILES_TOKEN}", "X-Session-Id": chat_id}
+    for f in files:
+        nm, b64 = f.get("name"), f.get("base64")
+        if not (nm and b64):
+            continue  # ohne Inhalt nichts zu spiegeln (grosse microVM-Dateien)
+        try:
+            r = await http.post(f"{SANDBOX_FILES_URL.rstrip('/')}/files/upload",
+                                params={"directory": "/"}, headers=headers,
+                                files={"file": (nm, base64.b64decode(b64))}, timeout=120.0)
+            r.raise_for_status()
+            out[nm] = r.json().get("path", "")
+        except Exception as e:
+            log.warning("Spiegeln von '%s' in den Chat-Ordner fehlgeschlagen: %s", nm, e)
+    if out:
+        log.info("%d Datei(en) in den Chat-Ordner gespiegelt (Datei-Browser)", len(out))
+    return out
 
 
 _TEXT_OUT = (".csv", ".tsv", ".txt", ".md", ".json", ".yaml", ".yml", ".log",
@@ -958,6 +996,10 @@ SANDBOX_WORK_PREFIX = os.environ.get("SANDBOX_WORK_PREFIX", "/home/sandbox/work"
 SANDBOX_WORK_MOUNT = os.environ.get("SANDBOX_WORK_MOUNT", "/sandbox-work")
 # Erzeugte Dateien des laufenden Requests: Name -> dict (b64 ODER path).
 _RUN_FILES: "dict[str, dict]" = {}
+# Chat-ID des laufenden Requests (OWUI: body['metadata']['chat_id']). Sie trennt
+# die Sandbox-Arbeitsordner und ist zugleich der Schluessel, unter dem OWUIs
+# Datei-Browser die Dateien des Chats abfragt (Header X-Session-Id).
+_CHAT_ID: str = ""
 
 _CTYPE = {
     ".ipynb": "application/x-ipynb+json", ".json": "application/json",
@@ -976,9 +1018,13 @@ def _guess_ctype(name: str) -> str:
     return _CTYPE.get(ext, "application/octet-stream")
 
 
-def reset_run_files() -> None:
-    """Vor jedem Request leeren (sonst wandern Dateien in den naechsten Chat)."""
+def reset_run_files(body: dict | None = None) -> None:
+    """Vor jedem Request leeren (sonst wandern Dateien in den naechsten Chat)
+    und die Chat-ID aus dem OWUI-Body uebernehmen."""
+    global _CHAT_ID
     _RUN_FILES.clear()
+    cid = ((body or {}).get("metadata") or {}).get("chat_id") or ""
+    _CHAT_ID = str(cid) if cid else ""
 
 
 def run_files_block() -> str:
@@ -1018,7 +1064,7 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
     if res is None:
         engine = "Subprozess-Sandbox" + (" (Volltext)" if files else " (FALLBACK, kein microVM!)")
         try:
-            res = await _post_run(http, SANDBOX_RUN_URL, code, files)
+            res = await _post_run(http, SANDBOX_RUN_URL, code, files, chat_id=_CHAT_ID)
         except Exception as e:
             log.exception("Code-Ausfuehrung fehlgeschlagen")
             return f"Sandbox-Fehler: {e}"
@@ -1027,6 +1073,13 @@ async def t_run_code(http: httpx.AsyncClient, code: str, files: dict | None = No
            f"--- stdout ---\n{res.get('stdout','')}",
            f"--- stderr ---\n{res.get('stderr','')}"]
     fl = res.get("files", [])
+    # microVM-Lauf: die Dateien liegen ausserhalb der Sandbox -> in den Chat-Ordner
+    # spiegeln, damit OWUIs Datei-Browser sie ebenfalls zeigt.
+    if fl and engine.startswith("microVM"):
+        mirrored = await _mirror_to_chat_folder(http, _CHAT_ID, fl)
+        for f in fl:
+            if f.get("name") in mirrored:
+                f["path"] = mirrored[f["name"]]
     if not fl:
         out.append("--- Dateien --- keine")
     for f in fl:

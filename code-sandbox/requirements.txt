@@ -6,6 +6,9 @@ jupyterlab==4.6.3
 jupyter-server==2.20.0
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
+# Multipart-Uploads: OWUIs Datei-Browser (rechte Seitenleiste) laedt Dateien
+# per Drag&Drop in den Chat-Ordner -> POST /files/upload braucht das hier.
+python-multipart==0.0.32
 
 # Office-Dateien (das "Skills"-Aequivalent von claude.ai)
 python-docx==1.2.0

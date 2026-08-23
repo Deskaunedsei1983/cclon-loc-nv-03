@@ -316,7 +316,7 @@ _graph = _build()
 async def run_agent(messages: list[dict], user_id: str = "owui",
                     request_body: dict | None = None) -> str:
     query = C.extract_query(messages)
-    C.reset_run_files()   # Sandbox-Dateien pro Anfrage frisch sammeln
+    C.reset_run_files(request_body)   # Sandbox-Dateien pro Anfrage frisch sammeln (+ Chat-ID)
     C.schedule_ingest(request_body or {})  # Chat-Upload lokal nach RAGFlow/Morphik (nicht-blockierend)
     mem_context = C.mem_search(_memory, query, user_id)
     init: dict = {"query": query, "mem_context": mem_context}

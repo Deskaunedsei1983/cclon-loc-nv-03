@@ -453,6 +453,11 @@ services:
       - "8000"
     environment:
       - JUPYTER_TOKEN=${JUPYTER_TOKEN:-bitte-zufalls-token-setzen}
+      # Datei-API fuer OWUIs Datei-Browser (rechte Seitenleiste). Die Sandbox
+      # spielt dafuer einen "Open Terminal"-Server, meldet aber features.terminal
+      # =false -> nur Datei-Browser, KEINE Shell. Ohne Token ist die API aus.
+      # Muss identisch zum 'key' in OWUI_TERMINAL_SERVERS sein.
+      - SANDBOX_FILES_TOKEN=${SANDBOX_FILES_TOKEN:-}
     volumes:
       - code-sandbox-data:/home/sandbox/work
     mem_limit: 8g
@@ -518,6 +523,11 @@ services:
       # Maskierte Suche + Sandbox
       - SEARCH_URL=http://presidio-proxy:8080/search
       - SANDBOX_RUN_URL=http://code-sandbox:8000/run
+      # Datei-API derselben Sandbox: speist OWUIs Datei-Browser (rechte
+      # Seitenleiste). Der Agent nutzt sie nur, um Ergebnisse eines microVM-Laufs
+      # in den Chat-Ordner zu spiegeln — sonst schreibt die Sandbox direkt dorthin.
+      - SANDBOX_FILES_URL=http://code-sandbox:8000
+      - SANDBOX_FILES_TOKEN=${SANDBOX_FILES_TOKEN:-}
       # Erzeugte Dateien -> Downloads in OWUI: bis hier base64 durch die Antwort,
       # darueber liest OWUI sie direkt aus dem gemounteten Sandbox-Volume.
       - SANDBOX_INLINE_MAX=${SANDBOX_INLINE_MAX:-20971520}
@@ -738,6 +748,17 @@ services:
       - CODE_INTERPRETER_JUPYTER_URL=http://code-sandbox:8888
       - CODE_INTERPRETER_JUPYTER_AUTH=token
       - CODE_INTERPRETER_JUPYTER_AUTH_TOKEN=${JUPYTER_TOKEN:-bitte-zufalls-token-setzen}
+      # --- Datei-Browser in der RECHTEN Seitenleiste (OWUI 0.11) --------------
+      # OWUI zeigt den Reiter "Files" NUR fuer einen Terminal-Server (Datei-Teil
+      # von "Open Terminal") ODER fuer den Pyodide-Interpreter. Wir nutzen den
+      # Terminal-Weg, weil nur der die Dateien aus UNSERER Sandbox sieht.
+      # code-sandbox liefert dafuer /files/* und meldet features.terminal=false
+      # -> Browser + Vorschau + Download/ZIP, aber keine Shell.
+      # WICHTIG: OWUI seedet diese Variable nur beim ERSTEN Start in seine DB.
+      # Bei bestehender Installation stattdessen (oder zusaetzlich) unter
+      # Admin -> Einstellungen -> Integrations -> Terminal Servers eintragen.
+      # start.sh erzeugt OWUI_TERMINAL_SERVERS automatisch in der .env.
+      - TERMINAL_SERVER_CONNECTIONS=${OWUI_TERMINAL_SERVERS:-[]}
       # --- Sub-Agents (OWUI 0.11): das Hauptmodell darf Teilaufgaben an eigene
       # Unter-Agenten delegieren (eingebautes 'delegate'-Tool). Braucht ein Modell
       # mit TOOL-CALLING — unser Nemotron/Qwen kann das. Laeuft komplett lokal.

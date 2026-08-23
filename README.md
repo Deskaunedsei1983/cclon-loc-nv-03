@@ -11,7 +11,8 @@ eigene neue Docker-Netze, eigenes RAGFlow, eigene Volumes.
 > [`docs/STACK.md`](docs/STACK.md) — Architektur & Funktionen im Detail ·
 > [`docs/FLOW.md`](docs/FLOW.md) — Abläufe & Datenflüsse ·
 > [`docs/USECASES.md`](docs/USECASES.md) — durchgespielte Use-Cases ·
-> [`docs/HOST_UPDATES.md`](docs/HOST_UPDATES.md) — **TODO nach NVIDIA-Treiber-/Kernel-Update** (CUDA-Fix).
+> [`docs/HOST_UPDATES.md`](docs/HOST_UPDATES.md) — **TODO nach NVIDIA-Treiber-/Kernel-Update** (CUDA-Fix) ·
+> [`docs/OWUI_DATEIBROWSER.md`](docs/OWUI_DATEIBROWSER.md) — Datei-Browser in der rechten Seitenleiste (Einrichtung).
 > Diese drei spiegeln den jeweils aktuellen Stand (inkl. der drei Hauptmodell-Varianten,
 > CPU-Struct-Helfer, Mem0-Selektor, Trust-Liste/Blocklist) und gehen dem README-Text bei
 > Abweichungen vor.
