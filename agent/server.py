@@ -55,6 +55,9 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="research-agent (OpenAI-compatible)", lifespan=_lifespan)
 MODEL_ID = "research-agent"
+# Header, unter dem OWUI die Chat-ID an externe Modelle weitergibt
+# (env.py: FORWARD_SESSION_INFO_HEADER_CHAT_ID, Default 'X-OpenWebUI-Chat-Id').
+CHAT_ID_HEADER = os.environ.get("OWUI_CHAT_ID_HEADER", "X-OpenWebUI-Chat-Id")
 
 
 @app.get("/v1/models")
@@ -76,13 +79,31 @@ async def chat_completions(request: Request):
     stream = bool(body.get("stream", False))
     user_id = body.get("user") or "owui"
 
+    # CHAT-ID: OWUI entfernt 'metadata' aus dem Payload, bevor es an ein EXTERNES
+    # OpenAI-kompatibles Modell geht (0.11.0, routers/openai.py:
+    # `metadata = payload.pop('metadata', None)`). Die Chat-ID kommt stattdessen als
+    # HTTP-HEADER 'X-OpenWebUI-Chat-Id' — allerdings NUR, wenn in OWUI
+    # ENABLE_FORWARD_USER_INFO_HEADERS=true gesetzt ist (Default: False).
+    # Ohne sie landen Sandbox-Dateien im Sammelordner '_ohne_chat' und tauchen im
+    # Datei-Browser der rechten Seitenleiste nicht unter dem Chat auf.
+    hdr_chat_id = request.headers.get(CHAT_ID_HEADER.lower()) or ""
+    if hdr_chat_id and not body.get("chat_id"):
+        body["chat_id"] = hdr_chat_id
+
     # DIAGNOSE Volltext: was schickt OWUI dem Agent wirklich?
     try:
         last = messages[-1].get("content") if (messages and isinstance(messages[-1], dict)) else ""
         _log.info("OWUI-REQ keys=%s | n_msgs=%d | has_files=%s | has_metadata=%s | "
-                  "is_task=%s | last_content=%.1800s",
+                  "chat_id=%s | is_task=%s | last_content=%.1800s",
                   list(body.keys()), len(messages), bool(body.get("files")),
-                  bool(body.get("metadata")), C.is_owui_task(messages), str(last)[:1800])
+                  bool(body.get("metadata")), body.get("chat_id") or "FEHLT",
+                  C.is_owui_task(messages), str(last)[:1800])
+        if not body.get("chat_id"):
+            _log.warning(
+                "Keine Chat-ID (weder im Body noch als Header %s) -> Sandbox-Dateien "
+                "landen in '_ohne_chat' und der Datei-Browser zeigt sie nicht unter "
+                "diesem Chat. In OWUI ENABLE_FORWARD_USER_INFO_HEADERS=true setzen.",
+                CHAT_ID_HEADER)
     except Exception:
         pass
 

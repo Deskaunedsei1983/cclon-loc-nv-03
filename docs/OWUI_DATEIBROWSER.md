@@ -98,6 +98,36 @@ Deshalb prüft `_resolve()` jetzt in drei Stufen:
 
 Außerhalb des Sandbox-Volumes bleibt **alles** hart bei 403.
 
+### Die Chat-ID kommt als HTTP-Header, nicht im Body
+
+OWUI **entfernt** `metadata` aus dem Payload, bevor es an ein *externes*
+OpenAI-kompatibles Modell geht (`routers/openai.py`:
+`metadata = payload.pop('metadata', None)`). Die Chat-ID reist stattdessen als
+Header:
+
+```python
+if ENABLE_FORWARD_USER_INFO_HEADERS and user:
+    headers = include_user_info_headers(headers, user)
+    if metadata and metadata.get('chat_id'):
+        headers[FORWARD_SESSION_INFO_HEADER_CHAT_ID] = metadata.get('chat_id')
+```
+
+`FORWARD_SESSION_INFO_HEADER_CHAT_ID` ist standardmäßig `X-OpenWebUI-Chat-Id`,
+und **`ENABLE_FORWARD_USER_INFO_HEADERS` steht per Default auf `False`**. Ohne
+den Schalter bekommt der Agent keine Chat-ID; alles landet dann im Sammelordner
+`_ohne_chat`, und der Datei-Browser zeigt unter dem Chat nichts an — obwohl die
+Datei sehr wohl erzeugt wurde. Genau dieser Fall stand im Log:
+
+```
+Sandbox-Datei ueber Volume: …_v2.ipynb (294128 B) -> /sandbox-work/_ohne_chat/…
+```
+
+`docker-compose.yml` setzt den Schalter deshalb auf `true`
+(`OWUI_FORWARD_USER_INFO`), und `server.py` liest den Header. Mitgesendet werden
+dabei auch `X-OpenWebUI-User-Id/-Name/-Email` — die gehen ausschließlich an den
+eigenen `agent`-Container im internen Netz, kein Egress. Fehlt die ID trotzdem,
+schreibt der Agent eine Warnung ins Log.
+
 ### Hochgeladene Datei liegt als Original im Chat-Ordner
 
 `document.txt` ist nur die **Textfassung** des Uploads — bei `.docx`/`.pdf` sogar

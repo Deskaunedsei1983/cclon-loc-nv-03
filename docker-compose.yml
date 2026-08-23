@@ -739,6 +739,16 @@ services:
       - WEB_LOADER_CONCURRENT_REQUESTS=3
       # RAG-Relevanzfilter umgehen -> geladene Inhalte DIREKT in den Modell-Kontext:
       - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=true
+      # CHAT-ID an den Agenten weitergeben. OWUI entfernt 'metadata' aus dem
+      # Payload fuer EXTERNE Modelle (routers/openai.py: payload.pop('metadata'))
+      # und schickt die Chat-ID stattdessen als Header 'X-OpenWebUI-Chat-Id' —
+      # aber NUR mit diesem Schalter (Default False). Ohne ihn landen alle in der
+      # Sandbox erzeugten Dateien im Sammelordner '_ohne_chat' statt im Ordner
+      # des Chats, und die rechte Seitenleiste zeigt sie nicht.
+      # Mitgesendet werden dabei auch X-OpenWebUI-User-Id/-Name/-Email — die
+      # gehen ausschliesslich an unseren eigenen 'agent'-Container im internen
+      # Netz (kein Egress, keine Cloud).
+      - ENABLE_FORWARD_USER_INFO_HEADERS=${OWUI_FORWARD_USER_INFO:-true}
       - ENABLE_CODE_INTERPRETER=true
       - CODE_EXECUTION_ENGINE=jupyter
       - CODE_EXECUTION_JUPYTER_URL=http://code-sandbox:8888
